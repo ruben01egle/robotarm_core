@@ -89,6 +89,8 @@ class JointTile(QWidget):
 
         axis_key = f"axis{self.joint_id}"
 
+        times = [f['t'] / 1e6 for f in frames]
+
         # 3. Mini-Modus oder Detail-Modus updaten
         if self.stack.currentIndex() == 0:  # MINI MODUS
             if self.current_view == "pos":
@@ -101,8 +103,8 @@ class JointTile(QWidget):
                 actual = [getattr(f['actual'], axis_key).torque for f in frames]
                 target = [getattr(f['target'], axis_key).torque for f in frames]
 
-            self.mini_curve.setData(actual)
-            self.mini_ref_curve.setData(target)
+            self.mini_curve.setData(times, actual)
+            self.mini_ref_curve.setData(times, target)
 
         else:  # DETAIL MODUS
             # Hier extrahieren wir alles für diese Achse mit der richtigen getattr() Funktion
@@ -114,11 +116,11 @@ class JointTile(QWidget):
             v_ref = [getattr(f['target'], axis_key).velocity for f in frames]
             p_ref = [getattr(f['target'], axis_key).position for f in frames]
 
-            self.curve_t_act.setData(t_data)
-            self.curve_t_ref.setData(t_ref)
+            self.curve_t_act.setData(times, t_data)
+            self.curve_t_ref.setData(times, t_ref)
             
-            self.curve_v_act.setData(v_data)
-            self.curve_v_ref.setData(v_ref)
+            self.curve_v_act.setData(times, v_data)
+            self.curve_v_ref.setData(times, v_ref)
             
-            self.curve_p_act.setData(p_data)
-            self.curve_p_ref.setData(p_ref)
+            self.curve_p_act.setData(times, p_data)
+            self.curve_p_ref.setData(times, p_ref)

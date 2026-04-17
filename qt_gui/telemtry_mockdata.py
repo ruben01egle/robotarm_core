@@ -36,7 +36,7 @@ class SimulatorWorker(QThread):
         """Diese Methode läuft in einem eigenen Thread."""
         while self.running:
             self.sim_idx += 1
-            curr_time = int(time.time() * 1e6)
+            curr_time = self.sim_idx*0.001*1e6
             
             # Mock Daten wie vorher
             telemetry_mock = MockPacket(self.sim_idx, curr_time)
