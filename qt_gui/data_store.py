@@ -1,8 +1,8 @@
 from collections import deque
 import threading
 
-class DataStore:
-    def __init__(self, maxlen=10000):
+class GuiDataStore:
+    def __init__(self, maxlen=4000):
         self._lock = threading.Lock()
         self.frames = deque(maxlen=maxlen)
 
