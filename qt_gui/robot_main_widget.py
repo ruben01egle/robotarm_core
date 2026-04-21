@@ -1,21 +1,19 @@
-from PyQt6.QtWidgets import (QMainWindow, QWidget, QGridLayout, QVBoxLayout, 
+from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QStackedWidget, QTextEdit)
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QTextCursor
-
 import os
 
-# Deine Widgets importieren (Pfade ggf. anpassen)
-from qt_gui.joint_tiles import JointTile
+# Deine Widgets importieren
+from qt_gui.telemetry_widget import TelemetryDashboard
 from qt_gui.motues_config_widget import RobotParameterConfig 
-from qt_gui.trajectory_widget import TrajectoryControlWidget # Das neue Traj-Widget
-from qt_gui.manual_control_widget import ManualControlWidget # Das neue Manual-Widget
+from qt_gui.trajectory_widget import TrajectoryControlWidget 
+from qt_gui.manual_control_widget import ManualControlWidget 
 
 class RobotMainWindow(QMainWindow):
     def __init__(self, guiDataStore):
         super().__init__()
         self.setWindowTitle("Robot Arm Control Center")
-        self.resize(1400, 900) # Etwas breiter für das Side-by-Side Layout
         self.data_store = guiDataStore
 
         # --- HAUPT LAYOUT ---
@@ -23,91 +21,89 @@ class RobotMainWindow(QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.main_layout = QVBoxLayout(self.central_widget)
 
-        # 1. OBEN: Erweiterte Navigation
+        # 1. OBEN: Navigation (Haupt-Modi)
         self.init_nav_bar()
 
-        # 2. MITTE: Das Herzstück (Side-by-Side)
+        # 2. MITTE: Side-by-Side Content
         self.content_layout = QHBoxLayout()
         
-        # LINKS: Der Control Stack (Wechselt zwischen Modi)
+        # LINKS: Der Control Stack
         self.control_stack = QStackedWidget()
-        self.control_stack.setFixedWidth(400) # Feste Breite für die Bedienelemente
+        self.control_stack.setFixedWidth(400) 
         
-        # Instanzen der Unter-Widgets erstellen
-        self.config_page = RobotParameterConfig()
         self.traj_page = TrajectoryControlWidget()
         self.manual_page = ManualControlWidget()
+        self.config_page = RobotParameterConfig()
         
-        # Widgets zum Stack hinzufügen
         self.control_stack.addWidget(self.traj_page)    # Index 0
         self.control_stack.addWidget(self.manual_page)  # Index 1
         self.control_stack.addWidget(self.config_page)  # Index 2
         
-        # RECHTS: Das permanente Dashboard
-        self.init_dashboard()
+        # RECHTS: Das neue, selbstverwaltete Dashboard
+        self.dashboard = TelemetryDashboard(self.data_store)
 
-        # Zusammenfügen
+        # Zusammenfügen der Mitte
         self.content_layout.addWidget(self.control_stack)
-        self.content_layout.addWidget(self.dashboard_widget, stretch=1)
+        self.content_layout.addWidget(self.dashboard, stretch=1)
         self.main_layout.addLayout(self.content_layout, stretch=4)
 
         # 3. UNTEN: Log-Konsole
         self.init_log_console()
 
-        # Signale verbinden
+        # --- SIGNALE VERBINDEN ---
         self.config_page.request_param_update.connect(self.log_param_change)
         self.manual_page.request_move.connect(self.log_manual_move)
         self.traj_page.start_trajectory.connect(self.handle_start_traj)
 
-        # Timer
-        self.refresh_time =33
-        self.refresh_counter = 0
+        # Timer (ca. 30 FPS für flüssige Plots)
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.global_update)
-        self.update_timer.start(self.refresh_time)
+        self.update_timer.start(33)
+
+        self.log_message("System initialized. Dashboard and Controls ready.")
 
     def init_nav_bar(self):
-        self.nav_layout = QHBoxLayout()
+        """Erstellt die obere Leiste zum Umschalten der linken Control-Seite."""
+        nav_container = QWidget()
+        nav_layout = QHBoxLayout(nav_container)
         
-        # Drei Buttons für die drei Modi
         self.btn_traj = QPushButton("TRAJECTORY")
         self.btn_manual = QPushButton("MANUAL")
         self.btn_config = QPushButton("CONFIG")
         
         for btn, idx in [(self.btn_traj, 0), (self.btn_manual, 1), (self.btn_config, 2)]:
             btn.setMinimumHeight(50)
-            btn.setStyleSheet("font-weight: bold;")
+            btn.setStyleSheet("font-weight: bold; font-size: 13px;")
+            # Lambda nutzt hier den Default-Parameter i=idx, um den Scope zu fixieren
             btn.clicked.connect(lambda checked, i=idx: self.switch_control_mode(i))
-            self.nav_layout.addWidget(btn)
+            nav_layout.addWidget(btn)
 
-        self.main_layout.addLayout(self.nav_layout)
-
-    def init_dashboard(self):
-        self.dashboard_widget = QWidget()
-        self.dashboard_widget.setStyleSheet("background-color: #2b2b2b; border-radius: 5px;")
-        grid = QGridLayout(self.dashboard_widget)
-        self.tiles = []
-        for i in range(6):
-            tile = JointTile(i+1, self.data_store)
-            self.tiles.append(tile)
-            grid.addWidget(tile, i // 2, i % 2) # 3 Zeilen, 2 Spalten für Side-Layout besser
+        self.main_layout.addWidget(nav_container)
 
     def init_log_console(self):
+        """Erstellt die Konsole am unteren Rand."""
         self.log_console = QTextEdit()
         self.log_console.setReadOnly(True)
-        self.log_console.setStyleSheet("background-color: #1e1e1e; color: #d4d4d4; font-family: monospace;")
+        self.log_console.setStyleSheet("""
+            background-color: #1e1e1e; 
+            color: #d4d4d4; 
+            font-family: 'Consolas', monospace;
+            font-size: 11px;
+            border-top: 2px solid #3d3d3d;
+        """)
         self.main_layout.addWidget(self.log_console, stretch=1)
 
     def switch_control_mode(self, index):
+        """Schaltet nur den linken Control-Stack um."""
         self.control_stack.setCurrentIndex(index)
         modes = ["TRAJECTORY", "MANUAL", "CONFIGURATION"]
-        self.log_message(f"Switched to {modes[index]} mode.")
+        self.log_message(f"Control Mode changed to: {modes[index]}")
 
     def global_update(self):
-        for tile in self.tiles:
-            tile.update_plots()
+        """Zentraler Timer-Aufruf. Das Dashboard aktualisiert alle seine Tiles selbst."""
+        self.dashboard.update_all()
 
-    # --- Event Handler ---
+    # --- Event Handler für Logging ---
     def log_message(self, message):
         from datetime import datetime
         ts = datetime.now().strftime("%H:%M:%S")
@@ -115,10 +111,11 @@ class RobotMainWindow(QMainWindow):
         self.log_console.moveCursor(QTextCursor.MoveOperation.End)
 
     def log_param_change(self, axis_id, param, value):
-        self.log_message(f"PARAM UPDATE: Axis {axis_id} | {param} = {value}")
+        self.log_message(f"PARAM UPDATE: Axis {axis_id} | {param} set to {value}")
 
     def log_manual_move(self, axis_id, position):
-        self.log_message(f"MANUAL MOVE: Axis {axis_id} to {position}°")
+        self.log_message(f"MANUAL MOVE: Axis {axis_id} -> {position:.2f}°")
 
     def handle_start_traj(self, path):
-        self.log_message(f"START TRAJECTORY: {os.path.basename(path)}")
+        filename = os.path.basename(path)
+        self.log_message(f"EXECUTING TRAJECTORY: {filename}")

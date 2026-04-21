@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, 
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QLabel,
                              QHBoxLayout, QPushButton, QStackedWidget)
 from PyQt6.QtCore import Qt
 import pyqtgraph as pg
@@ -15,6 +15,19 @@ class JointTile(QWidget):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
+
+        # --- TITEL ZEILE ---
+        self.title_label = QLabel(f"JOINT {self.joint_id}")
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title_label.setStyleSheet("""
+            background-color: #34495e; 
+            color: white; 
+            font-weight: bold; 
+            padding: 4px; 
+            border-radius: 3px;
+            font-size: 13px;
+        """)
+        layout.addWidget(self.title_label)
         
         # --- Buttons ---
         btn_layout = QHBoxLayout()

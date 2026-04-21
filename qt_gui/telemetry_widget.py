@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QScrollArea,
                              QPushButton, QStackedWidget, QGridLayout)
 import functools # Sicherere Methode für Lambda-Loops
 
@@ -13,7 +13,6 @@ class TelemetryDashboard(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        # FEHLER FIX: self.layout -> self.main_layout (Vermeidet Konflikt mit QWidget.layout())
         self.main_layout = QVBoxLayout(self)
         
         # --- Navigationsleiste (intern im Widget) ---
@@ -38,6 +37,8 @@ class TelemetryDashboard(QWidget):
         # Ansicht A: Das 6er Grid
         self.grid_container = QWidget()
         self.grid_layout = QGridLayout(self.grid_container)
+        self.grid_layout.setColumnStretch(0, 1)
+        self.grid_layout.setColumnStretch(1, 1)
         # Tiles initial ins Grid setzen
         self.show_grid() 
         
@@ -59,6 +60,7 @@ class TelemetryDashboard(QWidget):
                 widget = item.widget()
                 if widget is not None:
                     widget.setParent(None)
+                    widget.hide()
 
     def show_grid(self):
         """Zeigt alle Achsen im Mini-Modus an."""
@@ -66,6 +68,7 @@ class TelemetryDashboard(QWidget):
         self.clear_layout(self.grid_layout) # Sicherstellen, dass das Grid leer ist
         
         for i, tile in enumerate(self.tiles):
+            tile.show()
             self.grid_layout.addWidget(tile, i // 2, i % 2)
 
     def show_focus(self, index):
@@ -74,6 +77,7 @@ class TelemetryDashboard(QWidget):
         self.clear_layout(self.focus_layout) # Fokus-Bereich leeren
         
         target_tile = self.tiles[index]
+        target_tile.show()
         self.focus_layout.addWidget(target_tile)
 
     def update_all(self):
