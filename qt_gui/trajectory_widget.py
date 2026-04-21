@@ -19,7 +19,7 @@ class TrajectoryControlWidget(QWidget):
         layout.setSpacing(15)
 
         # Titel
-        header = QLabel("<b>Trajektorien Steuerung</b>")
+        header = QLabel("<b>Trajectory Control</b>")
         header.setStyleSheet("font-size: 16px;")
         layout.addWidget(header)
 
@@ -27,13 +27,13 @@ class TrajectoryControlWidget(QWidget):
         file_box = QFrame()
         file_box.setFrameShape(QFrame.Shape.StyledPanel)
         file_layout = QVBoxLayout(file_box)
-        file_layout.addWidget(QLabel("CSV Datei auswählen:"))
+        file_layout.addWidget(QLabel("Choose csv:"))
         
         self.file_selector = QComboBox()
         self.file_selector.setMinimumHeight(35)
         file_layout.addWidget(self.file_selector)
 
-        self.btn_refresh = QPushButton("Ordner aktualisieren")
+        self.btn_refresh = QPushButton("Refresh folder")
         self.btn_refresh.clicked.connect(self.refresh_file_list)
         file_layout.addWidget(self.btn_refresh)
         layout.addWidget(file_box)
@@ -58,7 +58,7 @@ class TrajectoryControlWidget(QWidget):
 
         # 3. Progress
         self.progress_bar = QProgressBar()
-        layout.addWidget(QLabel("Fortschritt:"))
+        layout.addWidget(QLabel("Progress:"))
         layout.addWidget(self.progress_bar)
         layout.addStretch()
 

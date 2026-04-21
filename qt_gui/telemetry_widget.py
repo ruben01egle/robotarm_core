@@ -51,6 +51,9 @@ class TelemetryDashboard(QWidget):
         self.grid_layout = QGridLayout(self.grid_container)
         self.grid_layout.setColumnStretch(0, 1)
         self.grid_layout.setColumnStretch(1, 1)
+        self.grid_layout.setRowStretch(0, 1)
+        self.grid_layout.setRowStretch(1, 1)
+        self.grid_layout.setRowStretch(2, 1)
         
         # Ansicht B: Der Fokus-Bereich
         self.focus_container = QWidget()

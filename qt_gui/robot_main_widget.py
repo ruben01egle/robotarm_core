@@ -5,10 +5,11 @@ from PyQt6.QtGui import QTextCursor
 import os
 
 # Deine Widgets importieren
-from qt_gui.telemetry_widget import TelemetryDashboard
-from qt_gui.motues_config_widget import RobotParameterConfig 
-from qt_gui.trajectory_widget import TrajectoryControlWidget 
-from qt_gui.manual_control_widget import ManualControlWidget 
+from .telemetry_widget import TelemetryDashboard
+from .motues_config_widget import RobotParameterConfig 
+from .trajectory_widget import TrajectoryControlWidget 
+from .manual_control_widget import ManualControlWidget 
+from .control_header import ControlHeader
 
 class RobotMainWindow(QMainWindow):
     def __init__(self, guiDataStore):
@@ -22,33 +23,46 @@ class RobotMainWindow(QMainWindow):
         self.main_layout = QVBoxLayout(self.central_widget)
 
         # 1. OBEN: Navigation (Haupt-Modi)
-        self.init_nav_bar()
+        self.control_header = ControlHeader()
 
         # 2. MITTE: Side-by-Side Content
         self.content_layout = QHBoxLayout()
         
         # LINKS: Der Control Stack
+        self.init_nav_bar()
+        self.left_column_container = QWidget()
+        self.left_column_container.setFixedWidth(400) # Die Breite gilt nun für die ganze Spalte
+        self.left_column_layout = QVBoxLayout(self.left_column_container)
+        self.left_column_layout.setContentsMargins(0, 0, 0, 0)
+
         self.control_stack = QStackedWidget()
         self.control_stack.setFixedWidth(400) 
         
         self.traj_page = TrajectoryControlWidget()
-        self.manual_page = ManualControlWidget()
+        self.manual_page = ManualControlWidget(self.data_store)
         self.config_page = RobotParameterConfig()
         
         self.control_stack.addWidget(self.traj_page)    # Index 0
         self.control_stack.addWidget(self.manual_page)  # Index 1
         self.control_stack.addWidget(self.config_page)  # Index 2
+
+        self.left_column_layout.addWidget(self.nav_container) 
+        self.left_column_layout.addWidget(self.control_stack)
         
         # RECHTS: Das neue, selbstverwaltete Dashboard
         self.dashboard = TelemetryDashboard(self.data_store)
 
         # Zusammenfügen der Mitte
-        self.content_layout.addWidget(self.control_stack)
+        self.content_layout.addWidget(self.left_column_container)
         self.content_layout.addWidget(self.dashboard, stretch=1)
+
+        self.main_layout.addWidget(self.control_header, stretch=1)
         self.main_layout.addLayout(self.content_layout, stretch=4)
 
         # 3. UNTEN: Log-Konsole
         self.init_log_console()
+
+        self.resize(1400, 1000)
 
         # --- SIGNALE VERBINDEN ---
         self.config_page.request_param_update.connect(self.log_param_change)
@@ -64,21 +78,31 @@ class RobotMainWindow(QMainWindow):
 
     def init_nav_bar(self):
         """Erstellt die obere Leiste zum Umschalten der linken Control-Seite."""
-        nav_container = QWidget()
-        nav_layout = QHBoxLayout(nav_container)
+        self.nav_container = QWidget()
+        self.nav_layout = QVBoxLayout(self.nav_container)
         
         self.btn_traj = QPushButton("TRAJECTORY")
         self.btn_manual = QPushButton("MANUAL")
         self.btn_config = QPushButton("CONFIG")
         
         for btn, idx in [(self.btn_traj, 0), (self.btn_manual, 1), (self.btn_config, 2)]:
-            btn.setMinimumHeight(50)
-            btn.setStyleSheet("font-weight: bold; font-size: 13px;")
+            btn.setCheckable(True)
+            btn.setAutoExclusive(True)
+            btn.setMinimumHeight(40)
+            btn.setStyleSheet("""
+                    QPushButton { 
+                        background-color: #3d3d3d; color: white; 
+                    }
+                    QPushButton:checked { 
+                        background-color: #27ae60;  /* Ein schönes Grün für den aktiven Modus */
+                        border: 2px solid #2ecc71;
+                    }
+                """)
             # Lambda nutzt hier den Default-Parameter i=idx, um den Scope zu fixieren
-            btn.clicked.connect(lambda checked, i=idx: self.switch_control_mode(i))
-            nav_layout.addWidget(btn)
-
-        self.main_layout.addWidget(nav_container)
+            btn.clicked.connect(lambda checked, i=idx: self.switch_gui_mode(i))
+            self.nav_layout.addWidget(btn)
+        self.btn_traj.setChecked(True)
+        self.main_layout.addWidget(self.nav_container)
 
     def init_log_console(self):
         """Erstellt die Konsole am unteren Rand."""
@@ -95,15 +119,16 @@ class RobotMainWindow(QMainWindow):
         """)
         self.main_layout.addWidget(self.log_console, stretch=0)
 
-    def switch_control_mode(self, index):
+    def switch_gui_mode(self, index):
         """Schaltet nur den linken Control-Stack um."""
         self.control_stack.setCurrentIndex(index)
         modes = ["TRAJECTORY", "MANUAL", "CONFIGURATION"]
-        self.log_message(f"Control Mode changed to: {modes[index]}")
+        self.log_message(f"Gui Mode changed to: {modes[index]}")
 
     def global_update(self):
         """Zentraler Timer-Aufruf. Das Dashboard aktualisiert alle seine Tiles selbst."""
         self.dashboard.update_all()
+        self.manual_page.update_actual_positions()
 
     # --- Event Handler für Logging ---
     def log_message(self, message):
@@ -115,8 +140,13 @@ class RobotMainWindow(QMainWindow):
     def log_param_change(self, axis_id, param, value):
         self.log_message(f"PARAM UPDATE: Axis {axis_id} | {param} set to {value}")
 
-    def log_manual_move(self, axis_id, position):
-        self.log_message(f"MANUAL MOVE: Axis {axis_id} -> {position:.2f}°")
+    def log_manual_move(self, positions):
+        """Loggt den Befehl für alle 6 Achsen gleichzeitig."""
+        # Erstellt einen String wie: J1: 10.2° | J2: -5.0° | ...
+        pos_strings = [f"J{i+1}: {pos:.1f}°" for i, pos in enumerate(positions)]
+        formatted_msg = " | ".join(pos_strings)
+        
+        self.log_message(f"MANUAL MOVE CMD: {formatted_msg}")
 
     def handle_start_traj(self, path):
         filename = os.path.basename(path)
