@@ -28,13 +28,13 @@ class RobotParameterConfig(QWidget):
         top_layout = QHBoxLayout(top_wrapper)
         
         self.axis_selector = QComboBox()
-        self.axis_selector.addItems([f"Gelenk {i+1}" for i in range(6)])
+        self.axis_selector.addItems([f"Axis {i+1}" for i in range(6)])
         self.axis_selector.setFixedWidth(150)
         # NEU: Triggert Read beim Umschalten
         self.axis_selector.currentIndexChanged.connect(self.on_axis_changed)
         
         top_layout.addStretch() # Schiebt alles zur Mitte
-        top_layout.addWidget(QLabel("<b>Aktive Achse:</b>"))
+        top_layout.addWidget(QLabel("<b>Active axis:</b>"))
         top_layout.addWidget(self.axis_selector)
         top_layout.addStretch() # Schiebt alles zur Mitte
         
@@ -48,8 +48,8 @@ class RobotParameterConfig(QWidget):
 
         # Header für das Grid
         grid.addWidget(QLabel("<b>Parameter</b>"), 0, 0)
-        grid.addWidget(QLabel("<b>Soll-Wert (Edit)</b>"), 0, 1)
-        grid.addWidget(QLabel("<b>Ist-Wert (Motor)</b>"), 0, 2)
+        grid.addWidget(QLabel("<b>target value (edit)</b>"), 0, 1)
+        grid.addWidget(QLabel("<b>current value (motor)</b>"), 0, 2)
 
         for i, (key, (label_text, min_v, max_v, default)) in enumerate(self.param_definitions.items(), 1):
             spin = QDoubleSpinBox()
@@ -70,7 +70,7 @@ class RobotParameterConfig(QWidget):
         main_layout.addWidget(grid_container, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # 3. Apply Button
-        self.btn_apply = QPushButton("Konfiguration an Motor übertragen")
+        self.btn_apply = QPushButton("Reconfigure motor")
         self.btn_apply.setFixedWidth(300)
         self.btn_apply.setFixedHeight(40)
         self.btn_apply.setStyleSheet("""
