@@ -9,8 +9,9 @@ class ControlHeader(QWidget):
     emergency_stop_pressed = pyqtSignal()
     arm_toggled = pyqtSignal(bool)
 
-    def __init__(self):
+    def __init__(self, store):
         super().__init__()
+        self.store = store
         self.setFixedHeight(60) # Etwas mehr Höhe für die Buttons
         self.init_ui()
 
@@ -88,8 +89,13 @@ class ControlHeader(QWidget):
         # Text ändert sich erst, wenn wir wirklich "Armed" sind (wird über update_telemetry gesteuert)
         self.arm_toggled.emit(is_checked)
 
-    def update_telemetry(self, connected, state, latency, is_actually_armed):
+    def update_status(self):
         """Zentrale Update-Logik für den Header."""
+        status = self.store.get_status()
+        connected = status["connected"]
+        state = status["mode"]
+        latency = status["latency"]
+        armed = status["armed"]
         # Verbindung
         color = "#2ecc71" if connected else "#e74c3c"
         status_text = "● CONNECTED" if connected else "● DISCONNECTED"
@@ -105,9 +111,9 @@ class ControlHeader(QWidget):
         else: self.latency_label.setStyleSheet("color: #95a5a6;")
 
         # Arm-Button Sync (Wichtig: Signale blockieren, um Endlosschleife zu verhindern)
-        if is_actually_armed != self.btn_arm.isChecked():
+        if armed != self.btn_arm.isChecked():
             self.btn_arm.blockSignals(True)
-            self.btn_arm.setChecked(is_actually_armed)
+            self.btn_arm.setChecked(armed)
             self.btn_arm.blockSignals(False)
         
-        self.btn_arm.setText("DISARM" if is_actually_armed else "ARM ROBOT")
+        self.btn_arm.setText("DISARM" if armed else "ARM ROBOT")

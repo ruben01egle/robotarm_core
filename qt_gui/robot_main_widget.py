@@ -23,7 +23,7 @@ class RobotMainWindow(QMainWindow):
         self.main_layout = QVBoxLayout(self.central_widget)
 
         # 1. OBEN: Navigation (Haupt-Modi)
-        self.control_header = ControlHeader()
+        self.control_header = ControlHeader(self.data_store)
 
         # 2. MITTE: Side-by-Side Content
         self.content_layout = QHBoxLayout()
@@ -38,9 +38,9 @@ class RobotMainWindow(QMainWindow):
         self.control_stack = QStackedWidget()
         self.control_stack.setFixedWidth(400) 
         
-        self.traj_page = TrajectoryControlWidget()
+        self.traj_page = TrajectoryControlWidget(self.data_store)
         self.manual_page = ManualControlWidget(self.data_store)
-        self.config_page = RobotParameterConfig()
+        self.config_page = RobotParameterConfig(self.data_store)
         
         self.control_stack.addWidget(self.traj_page)    # Index 0
         self.control_stack.addWidget(self.manual_page)  # Index 1
@@ -129,6 +129,9 @@ class RobotMainWindow(QMainWindow):
         """Zentraler Timer-Aufruf. Das Dashboard aktualisiert alle seine Tiles selbst."""
         self.dashboard.update_all()
         self.manual_page.update_actual_positions()
+        self.control_header.update_status()
+        self.config_page.update_params()
+        self.traj_page.update_progress()
 
     # --- Event Handler für Logging ---
     def log_message(self, message):

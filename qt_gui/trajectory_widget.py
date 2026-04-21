@@ -9,8 +9,9 @@ class TrajectoryControlWidget(QWidget):
     start_trajectory = pyqtSignal(str) 
     stop_trajectory = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, store, parent=None):
         super().__init__(parent)
+        self.store = store
         self.init_ui()
         self.refresh_file_list()
 
@@ -84,5 +85,6 @@ class TrajectoryControlWidget(QWidget):
         """Wird aufgerufen, wenn STOP gedrückt wird."""
         self.stop_trajectory.emit()
 
-    def set_progress(self, value):
-        self.progress_bar.setValue(int(value))
+    def update_progress(self):
+        prog = self.store.get_progress()
+        self.progress_bar.setValue(int(prog))

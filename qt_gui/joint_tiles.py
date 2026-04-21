@@ -4,10 +4,9 @@ from PyQt6.QtCore import Qt
 import pyqtgraph as pg
 
 class JointTile(QWidget):
-    def __init__(self, joint_id, store):
+    def __init__(self, joint_id):
         super().__init__()
         self.joint_id = joint_id
-        self.store = store
         
         self.current_view = "pos"
         self.init_ui()
@@ -96,46 +95,41 @@ class JointTile(QWidget):
         self.current_view = view
         self.mini_plot.setTitle(f"Mini: {view.capitalize()}")
 
-    def update_plots(self):
-        frames = self.store.get_plot_data()
+    def update_plots(self, frames):
+        # Da joint_id bei 1 startet, die Liste aber bei 0:
+        idx = self.joint_id - 1
         
-        if not frames:
-            return
+        # Zeitstempel extrahieren (bereits im Backend in Sekunden gewandelt)
+        times = [f['time'] for f in frames]
 
-        axis_key = f"axis{self.joint_id}"
-
-        times = [f['t'] / 1e6 for f in frames]
-
-        # 3. Mini-Modus oder Detail-Modus updaten
-        if self.stack.currentIndex() == 0:  # MINI MODUS
-            if self.current_view == "pos":
-                actual = [getattr(f['actual'], axis_key).position for f in frames]
-                target = [getattr(f['target'], axis_key).position for f in frames]
-            elif self.current_view == "speed":
-                actual = [getattr(f['actual'], axis_key).velocity for f in frames]
-                target = [getattr(f['target'], axis_key).velocity for f in frames]
-            else: # torque
-                actual = [getattr(f['actual'], axis_key).torque for f in frames]
-                target = [getattr(f['target'], axis_key).torque for f in frames]
+        if self.stack.currentIndex() == 0:  # --- MINI MODUS ---
+            # Wir wählen das Kürzel für den Dictionary-Key (p, v oder t)
+            key = 'p' if self.current_view == "pos" else ('v' if self.current_view == "speed" else 't')
+            
+            # Zugriff: Frame -> Liste 'act' -> Index der Achse -> Wert des Keys
+            actual = [f['joint_state_act'][idx][key] for f in frames]
+            target = [f['joint_state_ref'][idx][key] for f in frames]
 
             self.mini_curve.setData(times, actual)
             self.mini_ref_curve.setData(times, target)
 
-        else:  # DETAIL MODUS
-            # Hier extrahieren wir alles für diese Achse mit der richtigen getattr() Funktion
-            t_data = [getattr(f['actual'], axis_key).torque for f in frames]
-            v_data = [getattr(f['actual'], axis_key).velocity for f in frames]
-            p_data = [getattr(f['actual'], axis_key).position for f in frames]
+        else:  # --- DETAIL MODUS ---
+            # Schneller Zugriff auf alle drei Kurven gleichzeitig
+            # Actuals
+            p_act = [f['joint_state_act'][idx]['p'] for f in frames]
+            v_act = [f['joint_state_act'][idx]['v'] for f in frames]
+            t_act = [f['joint_state_act'][idx]['t'] for f in frames]
             
-            t_ref = [getattr(f['target'], axis_key).torque for f in frames]
-            v_ref = [getattr(f['target'], axis_key).velocity for f in frames]
-            p_ref = [getattr(f['target'], axis_key).position for f in frames]
+            # Targets
+            p_ref = [f['joint_state_ref'][idx]['p'] for f in frames]
+            v_ref = [f['joint_state_ref'][idx]['v'] for f in frames]
+            t_ref = [f['joint_state_ref'][idx]['t'] for f in frames]
 
-            self.curve_t_act.setData(times, t_data)
-            self.curve_t_ref.setData(times, t_ref)
+            self.curve_p_act.setData(times, p_act)
+            self.curve_p_ref.setData(times, p_ref)
             
-            self.curve_v_act.setData(times, v_data)
+            self.curve_v_act.setData(times, v_act)
             self.curve_v_ref.setData(times, v_ref)
             
-            self.curve_p_act.setData(times, p_data)
-            self.curve_p_ref.setData(times, p_ref)
+            self.curve_t_act.setData(times, t_act)
+            self.curve_t_ref.setData(times, t_ref)

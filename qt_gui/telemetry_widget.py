@@ -9,7 +9,7 @@ class TelemetryDashboard(QWidget):
     def __init__(self, store):
         super().__init__()
         self.store = store
-        self.tiles = [JointTile(i+1, store) for i in range(6)]
+        self.tiles = [JointTile(i+1) for i in range(6)]
         self.init_ui()
 
     def init_ui(self):
@@ -18,7 +18,7 @@ class TelemetryDashboard(QWidget):
         
         # --- 1. Navigationsleiste (Bleibt oben fixiert) ---
         self.nav_bar = QHBoxLayout()
-        self.btn_grid = QPushButton("Ganzes Grid")
+        self.btn_grid = QPushButton("All Axis")
         self.btn_grid.setStyleSheet("font-weight: bold; background-color: #34495e; color: white;")
         self.btn_grid.clicked.connect(self.show_grid)
         self.nav_bar.addWidget(self.btn_grid)
@@ -97,5 +97,8 @@ class TelemetryDashboard(QWidget):
         self.focus_layout.addWidget(target_tile)
 
     def update_all(self):
+        frames = self.store.get_plot_data()
+        if not frames:
+            return
         for tile in self.tiles:
-            tile.update_plots()
+            tile.update_plots(frames)
