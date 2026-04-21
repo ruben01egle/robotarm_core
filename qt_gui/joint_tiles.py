@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QLabel,
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QSizePolicy,
                              QHBoxLayout, QPushButton, QStackedWidget)
 from PyQt6.QtCore import Qt
 import pyqtgraph as pg
@@ -74,7 +74,9 @@ class JointTile(QWidget):
         self.curve_p_act = self.p3.plot(pen='y')
         self.curve_p_ref = self.p3.plot(pen=pg.mkPen('r', style=Qt.PenStyle.DashLine))
 
-        for p in [self.p1, self.p2, self.p3]: 
+        for p in [self.p1, self.p2, self.p3]:
+            p.setMinimumHeight(30)
+            p.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
             detail_layout.addWidget(p)
         
         self.stack.addWidget(self.mini_plot)   

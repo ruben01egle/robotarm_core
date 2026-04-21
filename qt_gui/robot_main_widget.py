@@ -84,6 +84,8 @@ class RobotMainWindow(QMainWindow):
         """Erstellt die Konsole am unteren Rand."""
         self.log_console = QTextEdit()
         self.log_console.setReadOnly(True)
+        self.log_console.setMaximumHeight(120) 
+        self.log_console.setMinimumHeight(60)
         self.log_console.setStyleSheet("""
             background-color: #1e1e1e; 
             color: #d4d4d4; 
@@ -91,7 +93,7 @@ class RobotMainWindow(QMainWindow):
             font-size: 11px;
             border-top: 2px solid #3d3d3d;
         """)
-        self.main_layout.addWidget(self.log_console, stretch=1)
+        self.main_layout.addWidget(self.log_console, stretch=0)
 
     def switch_control_mode(self, index):
         """Schaltet nur den linken Control-Stack um."""
