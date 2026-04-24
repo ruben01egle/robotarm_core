@@ -1,16 +1,16 @@
 {
-    "name": "Robot GUI Dev Environment",
+    "name": "Robotarm Dev Environment",
     "dockerComposeFile": [
-        "docker-compose.yml"
+        "../docker-compose.yml"
     ],
-    "service": "gui_app",
+    "service": "robotarm_core",
     "workspaceFolder": "/ros2_ws/src",
+    "runServices": ["robotarm_core"],
     "customizations": {
         "vscode": {
             "extensions": [
                 "ms-python.python",
-                "ms-iot.vscode-ros",
-                "njpwerner.autodocstring"
+                "ms-iot.vscode-ros"
             ]
         }
     },
