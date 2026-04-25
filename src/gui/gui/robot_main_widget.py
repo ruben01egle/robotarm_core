@@ -9,7 +9,7 @@ from .telemetry_widget import TelemetryDashboard
 from .motues_config_widget import RobotParameterConfig 
 from .trajectory_widget import TrajectoryControlWidget 
 from .manual_control_widget import ManualControlWidget 
-from .control_header import ControlHeader
+from .control_header_widget import ControlHeader
 
 class RobotMainWindow(QMainWindow):
     def __init__(self, guiDataStore):

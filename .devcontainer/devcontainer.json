@@ -4,14 +4,21 @@
         "../docker-compose.yml"
     ],
     "service": "robotarm_core",
-    "workspaceFolder": "/ros2_ws/src",
+    "workspaceFolder": "/robotarm_core",
     "runServices": ["robotarm_core"],
     "customizations": {
         "vscode": {
             "extensions": [
-                "ms-python.python",
-                "ms-iot.vscode-ros"
-            ]
+            "ms-python.python",
+            "ms-iot.vscode-ros",
+            "njpwerner.autodocstring",
+            "ms-vscode.cpptools",
+            "ms-vscode.cmake-tools",
+            "twxe.cmake",
+            "redhat.vscode-xml",
+            "redhat.vscode-yaml",
+            "smilerobotics.urdf"
+        ]
         }
     },
     "remoteUser": "root"

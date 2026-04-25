@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QSi
 from PyQt6.QtCore import Qt
 import functools
 
-from .joint_tiles import JointTile
+from .joint_tiles_widget import JointTile
 
 class TelemetryDashboard(QWidget):
     def __init__(self, store):
