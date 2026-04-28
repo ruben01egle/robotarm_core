@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'gui'
+package_name = 'utility'
 
 setup(
     name=package_name,
@@ -24,7 +24,6 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'gui_ros_node = gui.gui_ros_node:main',
         ],
     },
 )

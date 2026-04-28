@@ -12,10 +12,11 @@ from .manual_control_widget import ManualControlWidget
 from .control_header_widget import ControlHeader
 
 class RobotMainWindow(QMainWindow):
-    def __init__(self, guiDataStore):
+    def __init__(self, guiDataStore, node):
         super().__init__()
         self.setWindowTitle("Robot Arm Control Center")
         self.data_store = guiDataStore
+        self.node = node
 
         # --- HAUPT LAYOUT ---
         self.central_widget = QWidget()
@@ -64,8 +65,11 @@ class RobotMainWindow(QMainWindow):
 
         self.resize(1400, 1000)
 
-        # --- SIGNALE VERBINDEN ---
-        self.config_page.request_param_update.connect(self.log_param_change)
+        # --- SIGNALE VERBINDEN --- 
+        self.control_header.emergency_stop_pressed.connect(self.node.emergency_stop)
+        self.control_header.arm_toggled.connect(self.node.arm_command)
+        self.config_page.request_param_read.connect(self.node.request_read_motor_config)
+        self.config_page.request_param_write.connect(self.node.request_write_motor_config)
         self.manual_page.request_move.connect(self.log_manual_move)
         self.traj_page.start_trajectory.connect(self.handle_start_traj)
 
@@ -130,8 +134,15 @@ class RobotMainWindow(QMainWindow):
         self.dashboard.update_all()
         self.manual_page.update_actual_positions()
         self.control_header.update_status()
-        self.config_page.update_params()
+        self.config_page.update_widget()
         self.traj_page.update_progress()
+        self.log_update()
+
+    def log_update(self):
+        new_logs = self.data_store.get_new_logs()
+        for log_entry in new_logs:
+            self.log_console.append(log_entry)
+            self.log_console.moveCursor(QTextCursor.MoveOperation.End)
 
     # --- Event Handler für Logging ---
     def log_message(self, message):

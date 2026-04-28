@@ -93,7 +93,7 @@ class ControlHeader(QWidget):
         """Zentrale Update-Logik für den Header."""
         status = self.store.get_status()
         connected = status["connected"]
-        state = status["mode"]
+        state = status["state"]
         latency = status["latency"]
         armed = status["armed"]
         # Verbindung

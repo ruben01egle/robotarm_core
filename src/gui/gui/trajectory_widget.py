@@ -58,9 +58,13 @@ class TrajectoryControlWidget(QWidget):
         layout.addLayout(ctrl_layout)
 
         # 3. Progress
-        self.progress_bar = QProgressBar()
-        layout.addWidget(QLabel("Progress:"))
-        layout.addWidget(self.progress_bar)
+        self.progress_bar_planning = QProgressBar()
+        layout.addWidget(QLabel("Planning Progress:"))
+        layout.addWidget(self.progress_bar_planning)
+
+        self.progress_bar_executing = QProgressBar()
+        layout.addWidget(QLabel("Executing Progress:"))
+        layout.addWidget(self.progress_bar_executing)
         layout.addStretch()
 
     # --- WICHTIG: Diese Methoden müssen auf der gleichen Ebene wie init_ui stehen ---
@@ -79,12 +83,14 @@ class TrajectoryControlWidget(QWidget):
         if filename:
             full_path = os.path.join("trajectories", filename)
             self.start_trajectory.emit(full_path)
-            self.progress_bar.setValue(0)
+            self.progress_bar_planning.setValue(0)
+            self.progress_bar_executing.setValue(0)
 
     def on_stop_clicked(self):
         """Wird aufgerufen, wenn STOP gedrückt wird."""
         self.stop_trajectory.emit()
 
     def update_progress(self):
-        prog = self.store.get_progress()
-        self.progress_bar.setValue(int(prog))
+        prog_planning, prog_executing = self.store.get_progress()
+        self.progress_bar_planning.setValue(int(prog_planning))
+        self.progress_bar_executing.setValue(int(prog_executing))
