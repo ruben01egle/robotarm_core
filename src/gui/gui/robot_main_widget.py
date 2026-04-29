@@ -67,11 +67,13 @@ class RobotMainWindow(QMainWindow):
 
         # --- SIGNALE VERBINDEN --- 
         self.control_header.emergency_stop_pressed.connect(self.node.emergency_stop)
+        self.control_header.hard_stop_pressed.connect(self.node.hard_stop)
         self.control_header.arm_toggled.connect(self.node.arm_command)
         self.config_page.request_param_read.connect(self.node.request_read_motor_config)
         self.config_page.request_param_write.connect(self.node.request_write_motor_config)
-        self.manual_page.request_move.connect(self.log_manual_move)
-        self.traj_page.start_trajectory.connect(self.handle_start_traj)
+        self.manual_page.request_move.connect(self.node.start_motion_jointangles)
+        self.traj_page.start_trajectory.connect(self.node.start_motion_csv)
+        self.traj_page.stop_trajectory.connect(self.node.soft_stop)
 
         # Timer (ca. 30 FPS für flüssige Plots)
         self.update_timer = QTimer()
@@ -150,18 +152,3 @@ class RobotMainWindow(QMainWindow):
         ts = datetime.now().strftime("%H:%M:%S")
         self.log_console.append(f"[{ts}] {message}")
         self.log_console.moveCursor(QTextCursor.MoveOperation.End)
-
-    def log_param_change(self, axis_id, param, value):
-        self.log_message(f"PARAM UPDATE: Axis {axis_id} | {param} set to {value}")
-
-    def log_manual_move(self, positions):
-        """Loggt den Befehl für alle 6 Achsen gleichzeitig."""
-        # Erstellt einen String wie: J1: 10.2° | J2: -5.0° | ...
-        pos_strings = [f"J{i+1}: {pos:.1f}°" for i, pos in enumerate(positions)]
-        formatted_msg = " | ".join(pos_strings)
-        
-        self.log_message(f"MANUAL MOVE CMD: {formatted_msg}")
-
-    def handle_start_traj(self, path):
-        filename = os.path.basename(path)
-        self.log_message(f"EXECUTING TRAJECTORY: {filename}")

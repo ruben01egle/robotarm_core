@@ -179,6 +179,3 @@ class RobotParameterConfig(QWidget):
             
         # 3. Das gesamte Paket mit einem Signal emitten
         self.request_param_write.emit(axis_id, params_to_send)
-        
-        # Debug-Log
-        print(f"Sende Konfiguration: Achse {axis_id} -> {params_to_send}")

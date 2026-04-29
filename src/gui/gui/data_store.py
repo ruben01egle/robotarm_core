@@ -21,6 +21,18 @@ class GuiDataStore:
 
         self.log_queue = deque(maxlen=50)
 
+    def clear_store(self):
+        with self._lock:
+            self.connected = False
+            self.armed = False
+            self.state = "UNKNOWN"
+            self.current_latency = 0.0
+            self.trajectory_planning_prog = 0
+            self.trajectory_executing_prog = 0
+            self.axis_parameters = {}
+            self.trajectory_buffer = {}
+            self.frames.clear()
+
     def push_telemetry_frame(self, time_s, actual_list, target_list):
         frame = {
             'time': time_s,
@@ -73,16 +85,17 @@ class GuiDataStore:
                 "state": self.state,
                 "latency": self.current_latency,
             }
-    
-    def clear_params(self):
-        with self._lock:
-            self.axis_parameters = {}
         
     def get_params(self):
         with self._lock:
             return {
                 "params": self.axis_parameters
             }
+        
+    def set_progress(self, planning, executing):
+        with self._lock:
+            self.trajectory_planning_prog = planning
+            self.trajectory_executing_prog = executing
         
     def get_progress(self):
         with self._lock:

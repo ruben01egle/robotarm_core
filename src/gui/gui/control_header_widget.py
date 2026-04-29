@@ -7,6 +7,7 @@ class ControlHeader(QWidget):
     Vereint Monitoring (Status, Latenz) und kritische Kommandos (Arm, Stop).
     """
     emergency_stop_pressed = pyqtSignal()
+    hard_stop_pressed = pyqtSignal()
     arm_toggled = pyqtSignal(bool)
 
     def __init__(self, store):
@@ -76,12 +77,25 @@ class ControlHeader(QWidget):
         """)
         self.btn_emergency.clicked.connect(self.emergency_stop_pressed.emit)
 
+        self.btn_hard_stop = QPushButton("HARD STOP")
+        self.btn_hard_stop.setFixedHeight(38)
+        self.btn_hard_stop.setStyleSheet("""
+            QPushButton { 
+                background-color: #c0392b; color: white; font-weight: bold; 
+                padding: 0 25px; border-radius: 4px; font-size: 13px;
+            }
+            QPushButton:hover { background-color: #e74c3c; }
+            QPushButton:pressed { background-color: #962d22; }
+        """)
+        self.btn_hard_stop.clicked.connect(self.hard_stop_pressed.emit)
+
         # Zusammenbau
         layout.addWidget(self.conn_label)
         layout.addWidget(self.state_label)
         layout.addWidget(self.latency_label)
         layout.addStretch()
         layout.addWidget(self.btn_arm)
+        layout.addWidget(self.btn_hard_stop)
         layout.addWidget(self.btn_emergency)
 
     def handle_arm_click(self):

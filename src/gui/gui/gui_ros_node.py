@@ -3,19 +3,20 @@ import threading
 import rclpy
 from rclpy.node import Node
 from PyQt6.QtWidgets import QApplication
+import numpy as np
 
 from .robot_main_widget import RobotMainWindow
 from .data_store import GuiDataStore
-from.ReadMotorConfigClient import ReadMotorActionClient
+from .ReadMotorConfigClient import ReadMotorActionClient
 from .WriteConfigMotorClient import WriteMotorActionClient
+from .MissionClient import MissionClient
 
 from rcl_interfaces.msg import Log
-from std_msgs.msg import Empty
-from rclpy.action import ActionClient
-from interface.msg import TelemetryBatch, TrajectoryBatch, HeartbeatQuery, Heartbeat, SystemState, MotorParameter
+from interface.msg import TelemetryBatch, TrajectoryBatch, SystemState, MotorParameter, StopCommand, TrajectoryStatus
 from interface.srv import RequestAction
-from interface.action import Mission, ConfigMotor, ReadMotorConfigs
+from interface.action import Mission
 from utility.RequestActionClient import RequestActionClient
+from utility.HeartbeatClient import HeartbeatClient
 
 class GuiRosNode(Node):
     STATE_MAP = {
@@ -32,39 +33,40 @@ class GuiRosNode(Node):
         super().__init__('robot_gui_node')
         self.store = data_store
         self.state = SystemState.IDLE
+        self.config_requested = False
+        self.hold_joint_angles = []
+        self.trajectory_buffer = {}
 
-        self.create_subscription(HeartbeatQuery, 'heartbeat/query', self.heartbeat_cb, 10)
         self.create_subscription(SystemState, 'system_state', self.system_state_cb, 1)
-        self.create_subscription(HeartbeatQuery, 'heartbeat/query', self.heartbeat_cb, 10)
         self.create_subscription(Log, '/rosout', self.log_cb, 50)
         self.create_subscription(TelemetryBatch, 'telemetry', self.telemetry_cb, 100)
         self.create_subscription(TrajectoryBatch, 'trajectory/data', self.trajectory_cb, 100)
 
-        self.heartbeat_pub = self.create_publisher(Heartbeat, 'heartbeat/response', 5)
-        self.emergency_pub = self.create_publisher(Empty, 'system_error', 5)
+        self.stop_pub = self.create_publisher(StopCommand, 'system_stop', 5)
 
-        self.mission_client = ActionClient(self, Mission, 'move_robot')
         self.read_motor_config_client = ReadMotorActionClient(self, self.read_motor_config_cb)
-        self.write_motor_config_client = WriteMotorActionClient(self, self.read_motor_config_cb)
+        self.write_motor_config_client = WriteMotorActionClient(self, self.write_motor_config_cb)
+        self.mission_client = MissionClient(self, self.mission_feedback_cb)
 
         self.request_action_client = RequestActionClient(self)
+        self.heartbeat_client = HeartbeatClient(self)
 
         state_str = self.STATE_MAP.get(self.state, ("UNKNOWN"))
         self.store.set_status(state=state_str, connected=False, armed=False)
 
-
-    def heartbeat_cb(self, msg):
-        pass
 
     def system_state_cb(self, msg):
         new_state = msg.state
         new_state_str = self.STATE_MAP.get(new_state, ("UNKNOWN"))
         if self.state != new_state:
             if new_state == SystemState.IDLE:
+                self.store.clear_store()
+                self.config_requested = False
                 self.store.set_status(state=new_state_str, connected=False, armed=False)
             elif new_state == SystemState.CONNECTED:
-                self.store.clear_params()
-                self.read_motor_config_client.request_action()
+                if not self.config_requested:
+                    self.read_motor_config_client.request_action()
+                    self.config_requested = True
                 self.store.set_status(state=new_state_str, connected=True, armed=False)
             elif new_state == SystemState.ARMED:
                 self.store.set_status(state=new_state_str, connected=True, armed=True)
@@ -78,36 +80,63 @@ class GuiRosNode(Node):
             self.state = new_state
 
     def trajectory_cb(self, msg):
-        pass
+        t_id = msg.trajectory_id
+        if msg.trajectory_status == TrajectoryStatus.TRAJECTORY_BEGIN:
+            self.trajectory_buffer.clear()
+            self.hold_joint_angles = []
+        
+        for frame in msg.data:
+            key = (t_id, frame.idx)
+            
+            # Erstelle eine Liste von Dictionaries (eines pro Achse)
+            # Format: [{'p':.., 'v':.., 't':..}, {...}, ...]
+            target_list = []
+            for axis in [frame.axis1, frame.axis2, frame.axis3, frame.axis4, frame.axis5, frame.axis6]:
+                target_list.append({
+                    'p': axis.position,
+                    'v': axis.velocity,
+                    't': axis.torque
+                })
+                
+            self.trajectory_buffer[key] = target_list
+            if msg.trajectory_status == TrajectoryStatus.TRAJECTORY_END:
+                self.hold_joint_angles = target_list
 
     def telemetry_cb(self, msg):
-        pass
+        t_id = msg.trajectory_id
+        
+        for frame in msg.data:
+            key = (t_id, frame.idx)
+            time_s = frame.time_us / 1_000_000.0 # Umrechnung in Sekunden
+            
+            # Ist-Werte der 6 Achsen aufbereiten
+            actual_list = []
+            for axis in [frame.axis1, frame.axis2, frame.axis3, frame.axis4, frame.axis5, frame.axis6]:
+                actual_list.append({
+                    'p': axis.position,
+                    'v': axis.velocity,
+                    't': axis.torque
+                })
+
+            # Matching mit Trajectory-Puffer
+            if key in self.trajectory_buffer:
+                target_list = self.trajectory_buffer.pop(key)
+            elif self.hold_joint_angles:
+                # Im Stand: Nutze den letzten bekannten Sollwert
+                target_list = self.hold_joint_angles
+            else:
+                continue
+            self.store.push_telemetry_frame(time_s, actual_list, target_list)
 
     def log_cb(self, msg):
         levels = {20: "INFO", 30: "WARN", 40: "ERROR", 50: "FATAL"}
         level_str = levels.get(msg.level, "DEBUG")
         self.store.add_log(level_str, msg.name, msg.msg)
 
-    def mission_goal(self):
-        pass
-
-    def mission_feedback_cb(self, msg):
-        pass
-
-    def mission_result_cb(self, msg):
-        pass
-
-    def motor_config_goal(self):
-        pass
-
-    def motor_config_feedback_cb(self, msg):
-        pass
-
-    def motor_config_result_cb(self, msg):
-        pass
 
     def read_motor_config_cb(self, params, success):
         if not success:
+            self.config_requested = False
             self.get_logger().error("Read motor config failed")
             return
 
@@ -139,6 +168,10 @@ class GuiRosNode(Node):
         }
         self.store.update_axis_config(new_parameters)
 
+    def mission_feedback_cb(self, feedback_msg):
+        self.store.set_progress(feedback_msg.planning_progress, feedback_msg.execution_progress)
+
+    # functions for gui to attach signals to
     def arm_command(self, arm):
         if arm:
             self.get_logger().info('Arm robot requested')
@@ -147,15 +180,16 @@ class GuiRosNode(Node):
             self.get_logger().info('Disarm robot requested')
             self.request_action_client.send_request(RequestAction.Request.ACTION_DISARM_ROBOT, RequestAction.Request.TYPE_START, False)
 
-
     def start_motion_jointangles(self, angles):
-        print('start motion joint angles')
+        self.store.set_progress(0, 0)
+        self.get_logger().info('Start joint angle mission')
+        joint_angle_arr = np.array(angles, dtype=np.float32)
+        self.mission_client.request_action(Mission.Goal.OPTION_SET_JOINT_ANGLES, None, joint_angle_arr)
 
     def start_motion_csv(self, path):
-        print('start motion csv')
-
-    def stop_motion(self):
-        print('self motion')
+        self.store.set_progress(0, 0)
+        self.get_logger().info('Start csv mission')
+        self.mission_client.request_action(Mission.Goal.OPTION_CSV, path, None)
 
     def request_read_motor_config(self):
         self.read_motor_config_client.request_action()
@@ -168,9 +202,22 @@ class GuiRosNode(Node):
         msg.limit_v = int(params.get("limit_v", 0))
         self.write_motor_config_client.request_action(axis, msg)
 
+    def soft_stop(self):
+        msg = StopCommand()
+        msg.stop_type = StopCommand.TYPE_SOFT_STOP
+        self.stop_pub.publish(msg)
+        self.get_logger().warn('SOFT STOP INWOKED')
+
+    def hard_stop(self):
+        msg = StopCommand()
+        msg.stop_type = StopCommand.TYPE_HARD_STOP
+        self.stop_pub.publish(msg)
+        self.get_logger().warn('HARD STOP INWOKED')
+
     def emergency_stop(self):
-        msg = Empty()
-        self.emergency_pub.publish(msg)
+        msg = StopCommand()
+        msg.stop_type = StopCommand.TYPE_EMERGENCY
+        self.stop_pub.publish(msg)
         self.get_logger().error('EMERGENCY STOP INWOKED')
 
 def main(args=None):
