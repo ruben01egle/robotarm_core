@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y \
     libxcb-shape0 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install PyQt6 pyqtgraph numpy
+RUN pip3 install PyQt6 pyqtgraph numpy transitions
 
 WORKDIR /ros2_ws
 

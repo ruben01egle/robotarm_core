@@ -12,23 +12,14 @@ from .WriteConfigMotorClient import WriteMotorActionClient
 from .MissionClient import MissionClient
 
 from rcl_interfaces.msg import Log
-from interface.msg import TelemetryBatch, TrajectoryBatch, SystemState, MotorParameter, StopCommand, TrajectoryStatus
+from interface.msg import TelemetryBatch, TrajectoryBatch, SystemState, MotorParameter, StopCommand
 from interface.srv import RequestAction
 from interface.action import Mission
 from utility.RequestActionClient import RequestActionClient
 from utility.HeartbeatClient import HeartbeatClient
+from utility.state_string_map import STATE_MAP
 
 class GuiRosNode(Node):
-    STATE_MAP = {
-        SystemState.IDLE: ("IDLE"),
-        SystemState.CONNECTED: ("CONNECTED"),
-        SystemState.ARMED: ("ARMED"),
-        SystemState.MOTION: ("MOTION"),
-        SystemState.CONFIG: ("CONFIG"),
-        SystemState.ERROR: ("ERROR"),
-        SystemState.EMERGENCY_HALT: ("EMERGENCY")
-    }
-
     def __init__(self, data_store):
         super().__init__('robot_gui_node')
         self.store = data_store
@@ -38,11 +29,11 @@ class GuiRosNode(Node):
         self.trajectory_buffer = {}
 
         self.create_subscription(SystemState, 'system_state', self.system_state_cb, 1)
-        self.create_subscription(Log, '/rosout', self.log_cb, 50)
-        self.create_subscription(TelemetryBatch, 'telemetry', self.telemetry_cb, 100)
-        self.create_subscription(TrajectoryBatch, 'trajectory/data', self.trajectory_cb, 100)
+        self.create_subscription(Log, '/rosout', self.log_cb, 10)
+        self.create_subscription(TelemetryBatch, 'telemetry', self.telemetry_cb, 50)
+        self.create_subscription(TrajectoryBatch, 'trajectory/data', self.trajectory_cb, 50)
 
-        self.stop_pub = self.create_publisher(StopCommand, 'system_stop', 5)
+        self.stop_pub = self.create_publisher(StopCommand, 'system_stop', 1)
 
         self.read_motor_config_client = ReadMotorActionClient(self, self.read_motor_config_cb)
         self.write_motor_config_client = WriteMotorActionClient(self, self.write_motor_config_cb)
@@ -51,13 +42,13 @@ class GuiRosNode(Node):
         self.request_action_client = RequestActionClient(self)
         self.heartbeat_client = HeartbeatClient(self)
 
-        state_str = self.STATE_MAP.get(self.state, ("UNKNOWN"))
+        state_str = STATE_MAP.get(self.state, ("UNKNOWN"))
         self.store.set_status(state=state_str, connected=False, armed=False)
 
 
     def system_state_cb(self, msg):
         new_state = msg.state
-        new_state_str = self.STATE_MAP.get(new_state, ("UNKNOWN"))
+        new_state_str = STATE_MAP.get(new_state, ("UNKNOWN"))
         if self.state != new_state:
             if new_state == SystemState.IDLE:
                 self.store.clear_store()
@@ -81,7 +72,7 @@ class GuiRosNode(Node):
 
     def trajectory_cb(self, msg):
         t_id = msg.trajectory_id
-        if msg.trajectory_status == TrajectoryStatus.TRAJECTORY_BEGIN:
+        if msg.trajectory_status == TrajectoryBatch.START:
             self.trajectory_buffer.clear()
             self.hold_joint_angles = []
         
@@ -99,7 +90,7 @@ class GuiRosNode(Node):
                 })
                 
             self.trajectory_buffer[key] = target_list
-            if msg.trajectory_status == TrajectoryStatus.TRAJECTORY_END:
+            if msg.trajectory_status == TrajectoryBatch.END:
                 self.hold_joint_angles = target_list
 
     def telemetry_cb(self, msg):
@@ -178,7 +169,7 @@ class GuiRosNode(Node):
             self.request_action_client.send_request(RequestAction.Request.ACTION_ARM_ROBOT, RequestAction.Request.TYPE_START, False)
         else:
             self.get_logger().info('Disarm robot requested')
-            self.request_action_client.send_request(RequestAction.Request.ACTION_DISARM_ROBOT, RequestAction.Request.TYPE_START, False)
+            self.request_action_client.send_request(RequestAction.Request.ACTION_ARM_ROBOT, RequestAction.Request.TYPE_STOP, False)
 
     def start_motion_jointangles(self, angles):
         self.store.set_progress(0, 0)
@@ -245,9 +236,12 @@ def main(args=None):
     
     try:
         exit_code = app.exec()
+    except KeyboardInterrupt:
+        pass
     finally:
         ros_node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 if __name__ == "__main__":
     main()

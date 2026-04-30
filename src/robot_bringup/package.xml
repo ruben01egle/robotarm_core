@@ -1,14 +1,17 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>control_center</name>
+  <name>robot_bringup</name>
   <version>0.0.0</version>
   <description>TODO: Package description</description>
   <maintainer email="ruben01egle@gmail.com">root</maintainer>
   <license>TODO: License declaration</license>
 
-  <depend>interface</depend>
-  <depend>utility</depend>
+  <exec_depend>interface</exec_depend>
+  <exec_depend>utility</exec_depend>
+  <exec_depend>control_center</exec_depend>
+  <exec_depend>gui</exec_depend>
+  <exec_depend>hardware_simulation</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

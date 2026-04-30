@@ -18,7 +18,9 @@ class RequestActionClient:
             return False if blocking else None
 
         request = RequestAction.Request()
-        request.node_name = self._string_to_uint8_array(self.node.get_name(), 32)
+        node_name_bytes = self.node.get_name().encode('utf-8')
+        padded_bytes = node_name_bytes.ljust(32, b'\x00')[:32]
+        request.node_name = list(padded_bytes)
         request.action_id = action_id
         request.request_type = request_type
 

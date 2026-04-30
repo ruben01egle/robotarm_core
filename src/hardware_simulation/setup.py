@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'control_center'
+package_name = 'hardware_simulation'
 
 setup(
     name=package_name,
@@ -24,7 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'control_center_node = control_center.control_center_node:main'
+            'hardware_simulation_node = hardware_simulation.hardware_simulation_node:main'
         ],
     },
 )
