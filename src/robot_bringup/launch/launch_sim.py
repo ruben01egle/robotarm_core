@@ -21,7 +21,7 @@ def generate_launch_description():
         Node(
             package='hardware_simulation',
             executable='hardware_simulation_node',
-            name='hardware_simulation',
+            name='stm32_sim_node',
             output='screen'
         ),
     ])

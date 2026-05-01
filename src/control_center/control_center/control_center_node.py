@@ -3,8 +3,8 @@ from rclpy.time import Time
 from transitions import Machine
 from rclpy.node import Node
 from enum import IntEnum
-import numpy as np
-
+import socket
+import time
 
 from interface.msg import SystemState, Heartbeat, HeartbeatQuery, HardwareActions, HardwareCommand, HardwareFeedback
 from interface.srv import RequestAction
@@ -31,11 +31,18 @@ class ControlCenterNode(Node):
         # Structure: { 'node_name': {'last_query_id': int, 'latency': float} }
         self.tracked_nodes = {}
 
+        self.BEACON_PORT = 6666 
+        self.BEACON_SIGNATURE = b"ROS2"
+        self.HADWARE_SIGNATURE = "stm32"
+        self.beacon_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.beacon_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+
         self.command_id = 0
         self.pending_command = False
 
         transitions = [
             {'trigger': 'connect', 'source': self.State.IDLE, 'dest': self.State.CONNECTED},
+            {'trigger': 'disconnect', 'source': self.State.CONNECTED, 'dest': self.State.IDLE},
             {'trigger': 'enter_config', 'source': self.State.CONNECTED, 'dest': self.State.CONFIG},
             {'trigger': 'exit_config', 'source': self.State.CONFIG, 'dest': self.State.CONNECTED},
             {'trigger': 'arm', 'source': self.State.CONNECTED, 'dest': self.State.ARMED},
@@ -117,6 +124,35 @@ class ControlCenterNode(Node):
 
         for node_name in nodes_to_remove:
             del self.tracked_nodes[node_name]
+
+        self.handle_hw_connection()
+
+    def is_hw_connected(self):
+        for node_name in self.tracked_nodes:
+            if self.HADWARE_SIGNATURE in node_name.lower():
+                return True
+        return False
+
+    def handle_hw_connection(self):
+        if self.state == self.State.IDLE:
+            if self.is_hw_connected():
+                self.get_logger().info("Hardware node registered")
+                self.connect() # type: ignore
+            try:
+                self.beacon_sock.sendto(self.BEACON_SIGNATURE, ('<broadcast>', self.BEACON_PORT))
+            except Exception as e:
+                self.get_logger().error(f"Beacon failed: {e}")
+        elif self.state == self.State.CONNECTED:
+            if not self.is_hw_connected():
+                if self.pending_command:
+                    self.get_logger().error(f"HARDWARE DISCONNECTED UNEXPECTETLY")
+                    self.error() # type: ignore
+                else:
+                    self.disconnect() # type: ignore
+        else:
+            if not self.is_hw_connected():
+                self.get_logger().error(f"HARDWARE DISCONNECTED UNEXPECTETLY")
+                self.error() # type: ignore
 
     def request_action_cb(self, request, response):
         action_map = {

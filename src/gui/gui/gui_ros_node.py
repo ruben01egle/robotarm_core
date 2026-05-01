@@ -109,12 +109,16 @@ class GuiRosNode(Node):
                     't': axis.torque
                 })
 
-            # Matching mit Trajectory-Puffer
-            if key in self.trajectory_buffer:
-                target_list = self.trajectory_buffer.pop(key)
-            elif self.hold_joint_angles:
-                # Im Stand: Nutze den letzten bekannten Sollwert
+            if self.state == SystemState.CONNECTED:
+                self.hold_joint_angles = actual_list
                 target_list = self.hold_joint_angles
+            elif self.state == SystemState.ARMED:
+                target_list = self.hold_joint_angles
+            elif self.state == SystemState.MOTION:
+                if key in self.trajectory_buffer:
+                    target_list = self.trajectory_buffer.pop(key)
+                else:
+                    continue
             else:
                 continue
             self.store.push_telemetry_frame(time_s, actual_list, target_list)
