@@ -19,6 +19,13 @@ def generate_launch_description():
         ),
 
         Node(
+            package='mission_controller',
+            executable='mission_controller_node',
+            name='mission_controller_node',
+            output='screen'
+        ),
+
+        Node(
             package='hardware_simulation',
             executable='hardware_simulation_node',
             name='stm32_sim_node',

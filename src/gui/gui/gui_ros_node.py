@@ -63,7 +63,7 @@ class GuiRosNode(Node):
                 self.store.set_status(state=new_state_str, connected=True, armed=True)
             elif new_state == SystemState.CONFIG:
                 self.store.set_status(state=new_state_str, connected=True, armed=False)
-            elif new_state == SystemState.MOTION:
+            elif new_state == SystemState.MISSION:
                 self.store.set_status(state=new_state_str, connected=True, armed=True)
             elif new_state == SystemState.ERROR:
                 pass
@@ -114,7 +114,7 @@ class GuiRosNode(Node):
                 target_list = self.hold_joint_angles
             elif self.state == SystemState.ARMED:
                 target_list = self.hold_joint_angles
-            elif self.state == SystemState.MOTION:
+            elif self.state == SystemState.MISSION:
                 if key in self.trajectory_buffer:
                     target_list = self.trajectory_buffer.pop(key)
                 else:
@@ -164,7 +164,7 @@ class GuiRosNode(Node):
         self.store.update_axis_config(new_parameters)
 
     def mission_feedback_cb(self, feedback_msg):
-        self.store.set_progress(feedback_msg.planning_progress, feedback_msg.execution_progress)
+        self.store.set_progress(feedback_msg.feedback.planning_progress, feedback_msg.feedback.execution_progress)
 
     # functions for gui to attach signals to
     def arm_command(self, arm):
@@ -197,11 +197,12 @@ class GuiRosNode(Node):
         msg.limit_v = int(params.get("limit_v", 0))
         self.write_motor_config_client.request_action(axis, msg)
 
-    def soft_stop(self):
+    def stop_motion(self):
         msg = StopCommand()
         msg.stop_type = StopCommand.TYPE_SOFT_STOP
         self.stop_pub.publish(msg)
         self.get_logger().warn('SOFT STOP INWOKED')
+        self.mission_client.cancel_current_goal()
 
     def hard_stop(self):
         msg = StopCommand()

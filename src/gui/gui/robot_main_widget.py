@@ -73,7 +73,7 @@ class RobotMainWindow(QMainWindow):
         self.config_page.request_param_write.connect(self.node.request_write_motor_config)
         self.manual_page.request_move.connect(self.node.start_motion_jointangles)
         self.traj_page.start_trajectory.connect(self.node.start_motion_csv)
-        self.traj_page.stop_trajectory.connect(self.node.soft_stop)
+        self.traj_page.stop_trajectory.connect(self.node.stop_motion)
 
         # Timer (ca. 30 FPS für flüssige Plots)
         self.update_timer = QTimer()

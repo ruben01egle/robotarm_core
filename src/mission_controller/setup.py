@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'motion_controller'
+package_name = 'mission_controller'
 
 setup(
     name=package_name,
@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'mission_controller_node = mission_controller.mission_controller_node:main'
         ],
     },
 )

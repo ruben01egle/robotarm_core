@@ -4,7 +4,7 @@ STATE_MAP = {
         SystemState.IDLE: ("IDLE"),
         SystemState.CONNECTED: ("CONNECTED"),
         SystemState.ARMED: ("ARMED"),
-        SystemState.MOTION: ("MOTION"),
+        SystemState.MISSION: ("MOTION"),
         SystemState.CONFIG: ("CONFIG"),
         SystemState.ERROR: ("ERROR"),
         SystemState.EMERGENCY_HALT: ("EMERGENCY")

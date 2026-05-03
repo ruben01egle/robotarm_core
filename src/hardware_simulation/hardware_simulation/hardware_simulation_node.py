@@ -17,7 +17,7 @@ class HardwareSimulationNode(Node):
         IDLE = SystemState.IDLE
         CONNECTED = SystemState.CONNECTED
         ARMED = SystemState.ARMED
-        MISSION = SystemState.MOTION
+        MISSION = SystemState.MISSION
         CONFIG = SystemState.CONFIG
         ERROR = SystemState.ERROR
         EMERGENCY_HALT = SystemState.EMERGENCY_HALT

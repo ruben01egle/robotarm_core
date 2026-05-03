@@ -1,4 +1,4 @@
-import rclpy
+import time
 from rclpy.node import Node
 from interface.srv import RequestAction
 
@@ -27,8 +27,7 @@ class RequestActionClient:
         if blocking:
             # --- SYNCHRONER MODUS ---
             future = self.client.call_async(request)
-            # Blockiert den aktuellen Thread, bis die Antwort da ist
-            rclpy.spin_until_future_complete(self.node, future)
+            while not future.done(): time.sleep(0.01)
             
             return self._process_response(future)
         else:

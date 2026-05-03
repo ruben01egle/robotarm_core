@@ -11,6 +11,7 @@
   <exec_depend>utility</exec_depend>
   <exec_depend>control_center</exec_depend>
   <exec_depend>gui</exec_depend>
+  <exec_depend>mission_controller</exec_depend>
   <exec_depend>hardware_simulation</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
