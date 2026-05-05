@@ -17,7 +17,7 @@ class MissionClient:
         self._result_future = None
         self._goal_handle = None
 
-    def request_action(self, option, csv_path, target_joint_angles):
+    def request_mission(self, option, csv_path, target_joint_angles):
         """Startet die Action."""
         if not self.client.wait_for_server(timeout_sec=1.0):
             self.node.get_logger().error("Action Server to start mission not online")

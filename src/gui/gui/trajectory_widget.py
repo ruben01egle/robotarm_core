@@ -83,14 +83,12 @@ class TrajectoryControlWidget(QWidget):
         if filename:
             full_path = os.path.join("trajectories", filename)
             self.start_trajectory.emit(full_path)
-            self.progress_bar_planning.setValue(0)
-            self.progress_bar_executing.setValue(0)
 
     def on_stop_clicked(self):
         """Wird aufgerufen, wenn STOP gedrückt wird."""
         self.stop_trajectory.emit()
 
-    def update_progress(self):
+    def update_widget(self):
         prog_planning, prog_executing = self.store.get_progress()
         self.progress_bar_planning.setValue(int(prog_planning))
         self.progress_bar_executing.setValue(int(prog_executing))

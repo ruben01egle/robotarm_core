@@ -16,7 +16,7 @@ class WriteMotorActionClient:
         self._goal_future = None
         self._result_future = None
 
-    def request_action(self, axis_id, motor_params):
+    def request_write_config(self, axis_id, motor_params):
         """Startet die Action."""
         if not self.client.wait_for_server(timeout_sec=1.0):
             self.node.get_logger().error("Action Server to write motor config not online")

@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QSlider, QPushButton, QFrame)
+                             QSlider, QPushButton, QFrame, QProgressBar)
 from PyQt6.QtCore import pyqtSignal, Qt
 
 class ManualControlWidget(QWidget):
@@ -90,18 +90,31 @@ class ManualControlWidget(QWidget):
         btn_layout.addWidget(self.btn_write)
         btn_layout.addWidget(self.btn_sync)
         layout.addLayout(btn_layout)
+
+        # 3. Progress
+        self.progress_bar_planning = QProgressBar()
+        layout.addWidget(QLabel("Planning Progress:"))
+        layout.addWidget(self.progress_bar_planning)
+
+        self.progress_bar_executing = QProgressBar()
+        layout.addWidget(QLabel("Executing Progress:"))
+        layout.addWidget(self.progress_bar_executing)
+        layout.addStretch()
         
         layout.addStretch()
 
-    def update_actual_positions(self):
+    def update_widget(self):
         """
         Wird vom Main-Timer aufgerufen.
-        Übernimmt eine Liste [p1, p2, p3, p4, p5, p6]
         """
         positions = self.store.get_current_positions()
         self.current_actual_values = positions # Intern speichern für Sync
         for i, val in enumerate(positions):
             self.actual_labels[i].setText(f"ACT: {val:.2f}°")
+
+        prog_planning, prog_executing = self.store.get_progress()
+        self.progress_bar_planning.setValue(int(prog_planning))
+        self.progress_bar_executing.setValue(int(prog_executing))
 
     def sync_sliders_to_actual(self):
         """Setzt die Slider genau dahin, wo der Roboter gerade wirklich steht."""

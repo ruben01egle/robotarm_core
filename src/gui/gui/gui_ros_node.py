@@ -2,6 +2,7 @@ import sys
 import threading
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from PyQt6.QtWidgets import QApplication
 import numpy as np
 
@@ -28,10 +29,16 @@ class GuiRosNode(Node):
         self.hold_joint_angles = []
         self.trajectory_buffer = {}
 
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=50
+        )
+
         self.create_subscription(SystemState, 'system_state', self.system_state_cb, 1)
         self.create_subscription(Log, '/rosout', self.log_cb, 10)
         self.create_subscription(TelemetryBatch, 'telemetry', self.telemetry_cb, 50)
-        self.create_subscription(TrajectoryBatch, 'trajectory/data', self.trajectory_cb, 50)
+        self.create_subscription(TrajectoryBatch, 'trajectory/data', self.trajectory_cb, qos_profile)
 
         self.stop_pub = self.create_publisher(StopCommand, 'system_stop', 1)
 
@@ -56,7 +63,7 @@ class GuiRosNode(Node):
                 self.store.set_status(state=new_state_str, connected=False, armed=False)
             elif new_state == SystemState.CONNECTED:
                 if not self.config_requested:
-                    self.read_motor_config_client.request_action()
+                    self.read_motor_config_client.request_read_config()
                     self.config_requested = True
                 self.store.set_status(state=new_state_str, connected=True, armed=False)
             elif new_state == SystemState.ARMED:
@@ -179,15 +186,15 @@ class GuiRosNode(Node):
         self.store.set_progress(0, 0)
         self.get_logger().info('Start joint angle mission')
         joint_angle_arr = np.array(angles, dtype=np.float32)
-        self.mission_client.request_action(Mission.Goal.OPTION_SET_JOINT_ANGLES, None, joint_angle_arr)
+        self.mission_client.request_mission(Mission.Goal.OPTION_SET_JOINT_ANGLES, None, joint_angle_arr)
 
     def start_motion_csv(self, path):
         self.store.set_progress(0, 0)
         self.get_logger().info('Start csv mission')
-        self.mission_client.request_action(Mission.Goal.OPTION_CSV, path, None)
+        self.mission_client.request_mission(Mission.Goal.OPTION_CSV, path, None)
 
     def request_read_motor_config(self):
-        self.read_motor_config_client.request_action()
+        self.read_motor_config_client.request_read_config()
 
     def request_write_motor_config(self, axis, params):
         msg = MotorParameter()
@@ -195,7 +202,7 @@ class GuiRosNode(Node):
         msg.d_gain = int(params.get("d_gain", 0))
         msg.i_gain = int(params.get("i_gain", 0))
         msg.limit_v = int(params.get("limit_v", 0))
-        self.write_motor_config_client.request_action(axis, msg)
+        self.write_motor_config_client.request_write_config(axis, msg)
 
     def stop_motion(self):
         msg = StopCommand()

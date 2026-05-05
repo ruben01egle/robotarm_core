@@ -16,7 +16,7 @@ class ReadMotorActionClient:
         self._goal_future = None
         self._result_future = None
 
-    def request_action(self):
+    def request_read_config(self):
         """Startet die Action."""
         if not self.client.wait_for_server(timeout_sec=1.0):
             self.node.get_logger().error("Action Server to read motor config not online")

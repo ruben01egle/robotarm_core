@@ -134,10 +134,10 @@ class RobotMainWindow(QMainWindow):
     def global_update(self):
         """Zentraler Timer-Aufruf. Das Dashboard aktualisiert alle seine Tiles selbst."""
         self.dashboard.update_all()
-        self.manual_page.update_actual_positions()
+        self.manual_page.update_widget()
         self.control_header.update_status()
         self.config_page.update_widget()
-        self.traj_page.update_progress()
+        self.traj_page.update_widget()
         self.log_update()
 
     def log_update(self):
