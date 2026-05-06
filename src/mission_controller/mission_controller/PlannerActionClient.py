@@ -1,14 +1,13 @@
 from rclpy.action import ActionClient
-from interface.action import PlanTrajectory
 
 import time
 
-class PlanTrajectoryClient:
-    def __init__(self, node, callback_on_feedback, channel, callback_group=None):
+class PlannerActionClient:
+    def __init__(self, node, callback_on_feedback, channel, action_type, callback_group=None):
         self.node = node
         self.on_feedback_user_cb = callback_on_feedback
         
-        self.client = ActionClient(self.node, PlanTrajectory, channel, callback_group=callback_group)
+        self.client = ActionClient(self.node, action_type, channel, callback_group=callback_group)
         
         self._result_future = None
         self._goal_handle = None
@@ -16,7 +15,7 @@ class PlanTrajectoryClient:
         self._success = False
         self.trajectory = []
 
-    def request_plan_trajectory(self, option, csv_path, target_joint_angles):
+    def request_plan_trajectory(self, request):
         """Startet die Action."""
         self._result_future = None
         self.trajectory = []
@@ -24,12 +23,7 @@ class PlanTrajectoryClient:
         if not self.client.wait_for_server(timeout_sec=1.0):
             self.node.get_logger().error("Action Server to plan trajectory not online")
             return False
-        goal_msg = PlanTrajectory.Goal()
-        goal_msg.option = option
-        if csv_path:
-            goal_msg.csv_path = csv_path
-        if target_joint_angles is not None:
-            goal_msg.target_joint_angles = target_joint_angles
+        goal_msg = request
         
         self.node.get_logger().info("Request plan trajectory")
         

@@ -1,17 +1,17 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionServer, GoalResponse, CancelResponse
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 
-from enum import IntEnum
 import time
 
-from interface.msg import SystemState
-from interface.action import Mission, PlanTrajectory
+from interface.msg import SystemState, TelemetryBatch, JointAngles
+from interface.action import Mission, PlanJointSpace, PlanCSV
 from interface.srv import RequestAction
 
-from .PlanTrajectoryClient import PlanTrajectoryClient
+from .PlannerActionClient import PlannerActionClient
 from .TrajectoryExecutioner import TrajectoryExecutioner
 from utility.HeartbeatClient import HeartbeatClient
 from utility.RequestActionClient import RequestActionClient
@@ -22,21 +22,30 @@ class MissionControllerNode(Node):
 
         self.callback_group = ReentrantCallbackGroup()
 
+        qos_profile_telemetry = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+
         self.heartbeat_client = HeartbeatClient(self)
         self.request_action_client = RequestActionClient(self)
-        self.plan_p2p_jointspace_client = PlanTrajectoryClient(self,
+        self.plan_p2p_jointspace_client = PlannerActionClient(self,
                                                                self.plan_trajectory_feedback_cb,
                                                                "plan_trajectory/p2p_jointspace",
+                                                                PlanJointSpace,
                                                                callback_group=self.callback_group)
-        self.plan_csv_client = PlanTrajectoryClient(self,
+        self.plan_csv_client = PlannerActionClient(self,
                                                     self.plan_trajectory_feedback_cb,
                                                     "plan_trajectory/csv",
+                                                    PlanCSV,
                                                     callback_group=self.callback_group)
         self.executener = TrajectoryExecutioner(self,
                                                 self.execute_trajectory_feedback_cb,
                                                 callback_group=self.callback_group)
 
         self.create_subscription(SystemState, 'system_state', self.system_state_cb, 1)
+        self.create_subscription(TelemetryBatch, 'telemetry', self.telemetry_cb, qos_profile_telemetry)
 
         self._mission_action_server = ActionServer(
             self,
@@ -52,14 +61,27 @@ class MissionControllerNode(Node):
         self.executing_progress = 0
 
         self.system_state = SystemState.IDLE
+        self.current_robot_frame = None
+        self.current_joint_angles = None
         self.planned_trajectory = []
 
     def system_state_cb(self, msg):
             self.system_state = msg.state
 
+    def telemetry_cb(self, msg):
+        self.current_robot_frame = msg.data[-1]
+        self.current_joint_angles = [
+            self.current_robot_frame.axis1.position,
+            self.current_robot_frame.axis2.position,
+            self.current_robot_frame.axis3.position,
+            self.current_robot_frame.axis4.position,
+            self.current_robot_frame.axis5.position,
+            self.current_robot_frame.axis6.position
+        ]
+
     def mission_goal_cb(self, goal_request):
         if goal_request.option == Mission.Goal.OPTION_SET_JOINT_ANGLES:
-            self.get_logger().info(f"Mission set joint angles requested: {goal_request.target_joint_angles})")
+            self.get_logger().info(f"Mission set joint angles requested: {goal_request.target_joint_angles}, scale: {goal_request.motion_scale})")
         elif goal_request.option == Mission.Goal.OPTION_CSV:
             self.get_logger().info(f"Mission csv requested: {goal_request.csv_path})")
 
@@ -88,7 +110,7 @@ class MissionControllerNode(Node):
         # --- PHASE 1: PLANNING ---
         success = False
         if request.option == Mission.Goal.OPTION_SET_JOINT_ANGLES:
-            success = self.task_plan_p2p_jointspace(goal_handle, request.target_joint_angles)
+            success = self.task_plan_p2p_jointspace(goal_handle, request.target_joint_angles, request.motion_scale)
         elif request.option == Mission.Goal.OPTION_CSV:
             success = self.task_plan_csv(goal_handle, request.csv_path)
 
@@ -127,8 +149,18 @@ class MissionControllerNode(Node):
     def execute_trajectory_feedback_cb(self, progress):
         self.executing_progress = progress
 
-    def task_plan_p2p_jointspace(self, goal_handle, angles):
-        self.plan_p2p_jointspace_client.request_plan_trajectory(PlanTrajectory.Goal.OPTION_P2P_JOINT_SPACE, None, angles)
+    def task_plan_p2p_jointspace(self, goal_handle, target_angles, scale):
+        request = PlanJointSpace.Goal()
+
+        start_pt = JointAngles()
+        start_pt.joint_angles = self.current_joint_angles
+        target_pt = JointAngles()
+        target_pt.joint_angles = target_angles
+
+        request.waypoints = [start_pt, target_pt]
+        request.motion_scale = scale
+
+        self.plan_p2p_jointspace_client.request_plan_trajectory(request)
         success = self.wait_for_task(goal_handle,
                                      self.plan_p2p_jointspace_client.is_planning_done,
                                      self.plan_p2p_jointspace_client.is_success,
@@ -139,7 +171,9 @@ class MissionControllerNode(Node):
         return success
     
     def task_plan_csv(self, goal_handle, csv):
-        self.plan_csv_client.request_plan_trajectory(PlanTrajectory.Goal.OPTION_CSV, csv, None)
+        request = PlanCSV.Goal()
+        request.csv_path = csv
+        self.plan_csv_client.request_plan_trajectory(request)
         success = self.wait_for_task(goal_handle,
                                      self.plan_csv_client.is_planning_done,
                                      self.plan_csv_client.is_success,

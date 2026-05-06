@@ -3,12 +3,19 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt6.QtCore import pyqtSignal, Qt
 
 class ManualControlWidget(QWidget):
-    request_move = pyqtSignal(list)
+    request_move = pyqtSignal(list, float)
 
     def __init__(self, store, parent=None,):
         super().__init__(parent)
         self.store = store
-        self.limits = [(-180.0, 180.0)] * 6 
+        self.limits = [
+            (-180.0, 180.0),  # Achse 1
+            (-90.0, 90.0),    # Achse 2
+            (-150.0, 150.0),  # Achse 3
+            (-180.0, 180.0),  # Achse 4
+            (-120.0, 120.0),  # Achse 5
+            (-360.0, 360.0),  # Achse 6
+        ]
         self.sliders = []
         self.target_labels = [] # Anzeige für Slider-Stellung
         self.actual_labels = [] # Anzeige für echte Roboter-Position
@@ -25,6 +32,47 @@ class ManualControlWidget(QWidget):
         self.scroll_area = QFrame()
         self.scroll_area.setFrameShape(QFrame.Shape.StyledPanel)
         scroll_layout = QVBoxLayout(self.scroll_area)
+
+        # --- SPEED OVERRIDE SECTION (NEU) ---
+        speed_container = QFrame()
+        speed_container.setStyleSheet("""
+            QFrame {
+                background-color: #2c3e50; 
+                border-radius: 8px; 
+                border: 1px solid #3498db;
+            }
+        """)
+        speed_layout = QVBoxLayout(speed_container)
+
+        speed_header = QHBoxLayout()
+        speed_title = QLabel("Speed Scale")
+        speed_title.setStyleSheet("font-weight: bold; color: #3498db; border: none;")
+
+        self.speed_display = QLabel("50%") # Startwert
+        self.speed_display.setStyleSheet("font-weight: bold; color: #f1c40f; border: none;")
+
+        speed_header.addWidget(speed_title)
+        speed_header.addStretch()
+        speed_header.addWidget(self.speed_display)
+        speed_layout.addLayout(speed_header)
+
+        self.speed_slider = QSlider(Qt.Orientation.Horizontal)
+        self.speed_slider.setRange(0, 100) # 0 bis 100%
+        self.speed_slider.setValue(50)
+        self.speed_slider.setStyleSheet("height: 20px;")
+
+        # Verbindung für die Anzeige
+        self.speed_slider.valueChanged.connect(
+            lambda val: self.speed_display.setText(f"{val}%")
+        )
+
+        speed_layout.addWidget(self.speed_slider)
+
+        # Zuerst den Speed-Slider zum Haupt-Layout hinzufügen
+        layout.addWidget(speed_container)
+
+        # Ein kleiner Abstandshalter vor den Achsen
+        layout.addSpacing(5)
 
         for i in range(6):
             axis_layout = QVBoxLayout()
@@ -128,4 +176,5 @@ class ManualControlWidget(QWidget):
 
     def emit_all_moves(self):
         current_positions = [s.value() / 100.0 for s in self.sliders]
-        self.request_move.emit(current_positions)
+        current_scale = speed = self.speed_slider.value() / 100.0
+        self.request_move.emit(current_positions, current_scale)

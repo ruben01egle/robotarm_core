@@ -182,16 +182,16 @@ class GuiRosNode(Node):
             self.get_logger().info('Disarm robot requested')
             self.request_action_client.send_request(RequestAction.Request.ACTION_ARM_ROBOT, RequestAction.Request.TYPE_STOP, False)
 
-    def start_motion_jointangles(self, angles):
+    def start_motion_jointangles(self, angles, scale):
         self.store.set_progress(0, 0)
         self.get_logger().info('Start joint angle mission')
         joint_angle_arr = np.array(angles, dtype=np.float32)
-        self.mission_client.request_mission(Mission.Goal.OPTION_SET_JOINT_ANGLES, None, joint_angle_arr)
+        self.mission_client.request_mission(Mission.Goal.OPTION_SET_JOINT_ANGLES, None, joint_angle_arr, scale)
 
     def start_motion_csv(self, path):
         self.store.set_progress(0, 0)
         self.get_logger().info('Start csv mission')
-        self.mission_client.request_mission(Mission.Goal.OPTION_CSV, path, None)
+        self.mission_client.request_mission(Mission.Goal.OPTION_CSV, path, None, None)
 
     def request_read_motor_config(self):
         self.read_motor_config_client.request_read_config()

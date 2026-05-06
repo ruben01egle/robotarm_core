@@ -17,7 +17,7 @@ class MissionClient:
         self._result_future = None
         self._goal_handle = None
 
-    def request_mission(self, option, csv_path, target_joint_angles):
+    def request_mission(self, option, csv_path, target_joint_angles, scale):
         """Startet die Action."""
         if not self.client.wait_for_server(timeout_sec=1.0):
             self.node.get_logger().error("Action Server to start mission not online")
@@ -28,6 +28,8 @@ class MissionClient:
             goal_msg.csv_path = csv_path
         if target_joint_angles is not None:
             goal_msg.target_joint_angles = [float(x) for x in target_joint_angles]
+        if scale:
+            goal_msg.motion_scale = scale
         
         self.node.get_logger().info("Request mission start")
         
