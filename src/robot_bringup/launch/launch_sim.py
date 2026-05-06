@@ -31,4 +31,11 @@ def generate_launch_description():
             name='stm32_sim_node',
             output='screen'
         ),
+
+        Node(
+            package='planner',
+            executable='p2p_jointspace_node',
+            name='p2p_jointspace_node',
+            output='screen'
+        ),
     ])

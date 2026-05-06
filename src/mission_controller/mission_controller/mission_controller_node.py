@@ -2,7 +2,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionServer, GoalResponse, CancelResponse
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 
 import time
@@ -42,7 +42,7 @@ class MissionControllerNode(Node):
                                                     callback_group=self.callback_group)
         self.executener = TrajectoryExecutioner(self,
                                                 self.execute_trajectory_feedback_cb,
-                                                callback_group=self.callback_group)
+                                                callback_group=MutuallyExclusiveCallbackGroup())
 
         self.create_subscription(SystemState, 'system_state', self.system_state_cb, 1)
         self.create_subscription(TelemetryBatch, 'telemetry', self.telemetry_cb, qos_profile_telemetry)
@@ -144,7 +144,7 @@ class MissionControllerNode(Node):
         return CancelResponse.ACCEPT
     
     def plan_trajectory_feedback_cb(self, msg):
-        self.planning_progress = msg.progress
+        self.planning_progress = msg.feedback.progress
 
     def execute_trajectory_feedback_cb(self, progress):
         self.executing_progress = progress
@@ -192,7 +192,7 @@ class MissionControllerNode(Node):
             check_success_func=self.executener.is_success,
             cancel_func=self.executener.cancel,
             update_func=lambda: self.publish_mission_feedback(goal_handle, "EXECUTING"),
-            timeout_sec=300.0
+            timeout_sec=15.0
         )
 
     def publish_mission_feedback(self, goal_handle, phase):

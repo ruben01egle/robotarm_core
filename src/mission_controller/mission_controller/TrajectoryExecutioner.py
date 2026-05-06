@@ -70,11 +70,12 @@ class TrajectoryExecutioner():
                 self._start_confirmed = True
                 
             elif msg.trajectory_status == TrajectoryFeedback.REQUEST_DATA:
-                self.send_next_packets(msg.request_next_count)
                 self.last_send_idx = msg.received_until_idx
                 self.last_hardware_idx = msg.current_hardware_idx
+                self.send_next_packets(msg.request_next_count)
                 
             elif msg.trajectory_status == TrajectoryFeedback.END_REACHED:
+                self.node.get_logger().info("Executioner recieved END--------------------")
                 self._is_running = False
                 self._success = True
 
@@ -121,7 +122,7 @@ class TrajectoryExecutioner():
                 redundant_batch.data = [self.trajectory[-1]]
             
             self.trajectory_pub.publish(redundant_batch)
-            self.node.get_logger().debug("Resending last point with END status.")
+            self.node.get_logger().info("Resending last point with END status.")
 
     def cancel(self):
         self._is_running = False

@@ -1,15 +1,20 @@
 import rclpy
 from rclpy.time import Time
 from transitions import Machine
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from rclpy.node import Node
 from enum import IntEnum
 import math
+import threading
 import socket
 import threading
 
 
-from interface.msg import SystemState, HardwareActions, HardwareCommand, HardwareFeedback, TelemetryBatch, TelemetryFrame, AxisData
-
+from interface.msg import (
+    SystemState, HardwareActions, HardwareCommand, HardwareFeedback, 
+    TelemetryBatch, TelemetryFrame, AxisData, 
+    TrajectoryBatch, TrajectoryFeedback
+)
 from utility.HeartbeatClient import HeartbeatClient
 
 class HardwareSimulationNode(Node):
@@ -21,6 +26,12 @@ class HardwareSimulationNode(Node):
         CONFIG = SystemState.CONFIG
         ERROR = SystemState.ERROR
         EMERGENCY_HALT = SystemState.EMERGENCY_HALT
+
+    class StreamState(IntEnum):
+        IDLE = 0
+        INIT = 1
+        STREAMING = 2
+        FINISHED = 3
 
     state: State
 
@@ -57,6 +68,20 @@ class HardwareSimulationNode(Node):
         self.timer_watchdog = self.create_timer(1.0, self.watchdog_cb)
         self.timer_telemetry = self.create_timer(0.1, self.telemetry_cb)
 
+        self.streaming_state = self.StreamState.IDLE
+        self.controll_running = False
+        self.trajectory_buffer = []
+        self.current_trajectory_id = 0
+        self.processed_idx = 0
+        self.current_joint_angles = [0.0] * 6
+
+        self.last_request_time = self.get_clock().now()
+        self.REQUEST_COOLDOWN = 0.05  # 50ms Cooldown zwischen Requests
+        
+        # 1kHz Loop Simulation
+        self.timer_loop = self.create_timer(0.001, self.control_loop_cb) # 1ms
+        self.telemetry_accumulator = []
+
         self.start_time = self.get_clock().now()
 
         self.get_logger().info('Hardware sim node running')
@@ -88,6 +113,8 @@ class HardwareSimulationNode(Node):
     def telemetry_cb(self):
         if not self.telemetry_pub:
             return
+        if self.controll_running:
+            return
         # 1. Die Nachricht (Batch) initialisieren
         batch = TelemetryBatch()
         batch.packet_num = self.telemetry_packet_count
@@ -106,21 +133,12 @@ class HardwareSimulationNode(Node):
         # Nutze die Zeit für eine flüssige Bewegung
         t = diff_time.nanoseconds / 1e9 
         
-        def generate_axis(offset):
+        for i in range(1, 7):
             axis = AxisData()
-            # Beispielwerte: Position schwingt, Velocity ist Ableitung, Torque simuliert Last
-            axis.position = math.sin(t + offset)
-            axis.velocity = math.cos(t + offset)
-            axis.torque = (math.sin(t * 2 + offset) * 0.5)
-            return axis
-
-        # Achsen 1 bis 6 befüllen
-        frame.axis1 = generate_axis(0.0)
-        frame.axis2 = generate_axis(0.5)
-        frame.axis3 = generate_axis(1.0)
-        frame.axis4 = generate_axis(1.5)
-        frame.axis5 = generate_axis(2.0)
-        frame.axis6 = generate_axis(2.5)
+            axis.position = self.current_joint_angles[i-1]
+            axis.velocity = 0.0
+            axis.torque = 0.0
+            setattr(frame, f"axis{i}", axis)
         
         frame.gripper = 0.0 # Simulierter Greiferwert (0 = offen, 1 = geschlossen)
 
@@ -150,16 +168,158 @@ class HardwareSimulationNode(Node):
         response.action = msg.action
         
         trigger = action_map[msg.action]
-        try:
+        if getattr(self, f"may_{trigger}")():
             getattr(self, trigger)()
             response.success = True
             response.current_state = self.state
-        except:
+        else:
+            self.get_logger().error(
+                f"INVALID TRANSITION: Cannot execute '{trigger}' while in state '{self.state.name}'"
+            )
             response.success = False
         if self.hardware_feedbaack_pub:
             self.hardware_feedbaack_pub.publish(response)
         else:
             self.get_logger().error("Ros init did not provide all publishers")
+
+    def trajectory_data_cb(self, msg):
+        """Empfängt Batches vom TrajectoryExecutioner"""
+        if msg.trajectory_status == TrajectoryBatch.START:
+            if self.streaming_state != self.StreamState.IDLE:
+                self.get_logger().error("Recieved trajectory while executing")
+                self.controll_running = False
+                self.error()    # type: ignore
+            self.get_logger().info(f"New Trajectory START received: ID {msg.trajectory_id}")
+            self.trajectory_buffer = []
+            self.processed_idx = 0
+            self.current_trajectory_id = msg.trajectory_id
+            
+            # START_ACK senden
+            ack = TrajectoryFeedback()
+            ack.trajectory_id = msg.trajectory_id
+            ack.trajectory_status = TrajectoryFeedback.START_ACK
+            self.traj_feedback_pub.publish(ack)
+            
+            self._request_more_data()
+            self.streaming_state = self.StreamState.INIT
+            return
+        
+
+        if msg.trajectory_id == self.current_trajectory_id:
+            # Daten in den Puffer schieben
+            self.trajectory_buffer.extend(msg.data)
+            
+            if msg.trajectory_status == TrajectoryBatch.END:
+                self.get_logger().info("Full trajectory received.")
+                self.streaming_state = self.StreamState.FINISHED
+            
+            if self.streaming_state == self.StreamState.INIT:
+                self.streaming_state = self.StreamState.STREAMING
+                self.controll_running = True
+
+    def control_loop_cb(self):
+        """Die simulierten 1kHz (1ms) Hardware-Interrupt-Routine"""
+        if not self.controll_running:
+            return
+
+        # 1. Sollwert aus Puffer holen
+        if len(self.trajectory_buffer) > 0:
+            target_frame = self.trajectory_buffer.pop(0)
+            self.processed_idx += 1
+            
+            # Simulation: Wir "regeln" auf den Zielwert (hier einfach Kopieren mit Rauschen)
+            current_frame = self._simulate_hardware_behavior(target_frame)
+
+            self.current_joint_angles = [
+                current_frame.axis1.position,
+                current_frame.axis2.position,
+                current_frame.axis3.position,
+                current_frame.axis4.position,
+                current_frame.axis5.position,
+                current_frame.axis6.position
+            ]
+        else:
+            if self.streaming_state == self.StreamState.FINISHED:
+                self._publish_telemetry_batch()
+                ack = TrajectoryFeedback()
+                ack.trajectory_id = self.current_trajectory_id
+                self.get_logger().info("HARDWARE END REACHED")
+                ack.trajectory_status = TrajectoryFeedback.END_REACHED
+                if self.traj_feedback_pub:
+                    self.traj_feedback_pub.publish(ack)
+                self.streaming_state = self.StreamState.IDLE
+                self.controll_running = False
+            else:
+                self.get_logger().error("Trajectory ran dry")
+                self.error() # type: ignore
+            return
+            
+
+        # 2. Telemetrie sammeln
+        self.telemetry_accumulator.append(current_frame)
+        
+        if len(self.telemetry_accumulator) >= 10:
+            self._publish_telemetry_batch()
+
+        # 3. Flow Control: Neue Daten anfordern wenn Puffer leerer wird
+        # Wenn weniger als 100 Punkte im Puffer sind, fragen wir 50 neue an
+        if self.streaming_state != self.StreamState.FINISHED:
+            if len(self.trajectory_buffer) < 100:
+                now = self.get_clock().now()
+                # Prüfen, ob seit dem letzten Request genug Zeit vergangen ist (50ms)
+                duration = (now - self.last_request_time).nanoseconds / 1e9
+                if duration > self.REQUEST_COOLDOWN:
+                    self._request_more_data()
+                    self.last_request_time = now                
+
+
+    def _simulate_hardware_behavior(self, target_frame):
+        """Fügt den Sollwerten simuliertes Rauschen hinzu"""
+        import random
+        noise = lambda: random.uniform(-0.001, 0.001)
+        
+        # Wir klonen den Frame und verrauschen die Achsen
+        f = TelemetryFrame()
+        diff_time = self.get_clock().now() - self.start_time
+        # Umrechnung in Mikrosekunden
+        f.time_us = int(diff_time.nanoseconds / 1000)
+        f.idx = target_frame.idx
+        
+        # Simulation der 6 Achsen (Beispielhaft für Achse 1)
+        for i in range(1, 7):
+            axis_name = f"axis{i}"
+            target_axis = getattr(target_frame, axis_name)
+            sim_axis = AxisData()
+            sim_axis.position = target_axis.position + noise()
+            sim_axis.velocity = target_axis.velocity + noise()
+            sim_axis.torque = target_axis.torque + noise()
+            setattr(f, axis_name, sim_axis)
+        
+        f.gripper = target_frame.gripper
+        return f
+
+    def _request_more_data(self):
+        """Sendet REQUEST_DATA an den Executioner"""
+        msg = TrajectoryFeedback()
+        msg.trajectory_id = self.current_trajectory_id
+        msg.trajectory_status = TrajectoryFeedback.REQUEST_DATA
+        msg.request_next_count = 50 
+        msg.received_until_idx = self.processed_idx + len(self.trajectory_buffer)
+        msg.current_hardware_idx = self.processed_idx
+        self.traj_feedback_pub.publish(msg)
+
+    def _publish_telemetry_batch(self):
+        """Verschickt die gesammelten 10 Frames"""
+        batch = TelemetryBatch()
+        batch.trajectory_id = self.current_trajectory_id
+        batch.packet_num = self.telemetry_packet_count
+        batch.data = self.telemetry_accumulator
+        
+        if self.telemetry_pub:
+            self.telemetry_pub.publish(batch)
+        
+        self.telemetry_packet_count += 1
+        self.telemetry_accumulator = []
 
 
     def _start_discovery(self):
@@ -182,6 +342,21 @@ class HardwareSimulationNode(Node):
         )
         self.hardware_feedbaack_pub = self.create_publisher(HardwareFeedback, 'hardware/feedback', 1)
         self.telemetry_pub = self.create_publisher(TelemetryBatch, 'telemetry', 1)
+        qos_best_effort = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10
+        )
+
+        # Subscriber für Trajektorie-Daten vom Executioner
+        self.traj_sub = self.create_subscription(
+            TrajectoryBatch, 'trajectory/data', self.trajectory_data_cb, qos_best_effort
+        )
+        
+        # Publisher für Feedback zum Executioner
+        self.traj_feedback_pub = self.create_publisher(
+            TrajectoryFeedback, 'trajectory/feedback', 3
+        )
         self.connect() # type: ignore
 
     def _deinitialize_ros_interface(self):

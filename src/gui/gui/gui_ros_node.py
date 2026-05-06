@@ -80,12 +80,13 @@ class GuiRosNode(Node):
     def trajectory_cb(self, msg):
         t_id = msg.trajectory_id
         if msg.trajectory_status == TrajectoryBatch.START:
+            self.get_logger().info(f"--- NEW TRAJECTORY START: ID {t_id} ---")
             self.trajectory_buffer.clear()
             self.hold_joint_angles = []
         
         for frame in msg.data:
             key = (t_id, frame.idx)
-            
+            #self.get_logger().info(f"[PLANNER] Adding to buffer: Key {key}")
             # Erstelle eine Liste von Dictionaries (eines pro Achse)
             # Format: [{'p':.., 'v':.., 't':..}, {...}, ...]
             target_list = []
@@ -98,6 +99,7 @@ class GuiRosNode(Node):
                 
             self.trajectory_buffer[key] = target_list
             if msg.trajectory_status == TrajectoryBatch.END:
+                self.get_logger().info(f"--- TRAJECTORY DATA END: ID {t_id}, Total Frames: {frame.idx} ---")
                 self.hold_joint_angles = target_list
 
     def telemetry_cb(self, msg):
@@ -121,10 +123,13 @@ class GuiRosNode(Node):
                 target_list = self.hold_joint_angles
             elif self.state == SystemState.ARMED:
                 target_list = self.hold_joint_angles
+            elif self.state == SystemState.MISSION and msg.trajectory_id == 0:
+                target_list = self.hold_joint_angles
             elif self.state == SystemState.MISSION:
                 if key in self.trajectory_buffer:
                     target_list = self.trajectory_buffer.pop(key)
                 else:
+                    #self.get_logger().error(f"[MISSING] Hardware sent Key {key}, but it's NOT in Buffer! Buffer Size: {len(self.trajectory_buffer)}")
                     continue
             else:
                 continue

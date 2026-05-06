@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            "p2p_jointspace_node = planner.p2p_jointspace_node:main"
         ],
     },
 )
