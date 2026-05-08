@@ -193,7 +193,7 @@ class ControlCenterNode(Node):
             self.pending_command = True
 
             response.success = True
-            self.get_logger().info(f"Triggered {trigger} (HW Cmd: {hw_cmd})")
+            self.get_logger().debug(f"Triggered {trigger} (HW Cmd: {hw_cmd})")
         else:
             self.get_logger().error(f"INVALID TRANSITION: {trigger} not allowed from {self.state}")
             response.success = False

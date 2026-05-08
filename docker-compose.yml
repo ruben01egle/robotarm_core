@@ -7,9 +7,12 @@ services:
       dockerfile: .devcontainer/Dockerfile
     network_mode: host
     privileged: true
+    environment:
+      - QT_QPA_PLATFORM=xcb
     volumes:
       - .:/robotarm_core
       - /etc/localtime:/etc/localtime:ro
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
     command: /bin/bash -c "source /opt/ros/humble/setup.bash && tail -f /dev/null"
 
   micro-ros-agent:

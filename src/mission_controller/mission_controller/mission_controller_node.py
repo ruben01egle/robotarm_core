@@ -91,18 +91,16 @@ class MissionControllerNode(Node):
         
         self.planning_progress = 0
         self.executing_progress = 0
-        self.get_logger().info(f"returning goal")
         return GoalResponse.ACCEPT
 
     def mission_execute_cb(self, goal_handle):
-        self.get_logger().info("entering mission")
         request = goal_handle.request
         result = Mission.Result()
 
         self.planned_trajectory = []
 
         while self.system_state != SystemState.MISSION:
-            self.get_logger().info("Waiting for state transition")
+            self.get_logger().debug("Waiting for state transition")
             time.sleep(0.5)
 
         self.get_logger().info("Starting mission")
@@ -212,7 +210,7 @@ class MissionControllerNode(Node):
         :return: True, wenn der Task erfolgreich beendet wurde, False bei Abbruch oder Timeout.
         """
         start_time = self.get_clock().now()
-        self.get_logger().info("Waiting for sub-task to complete...")
+        self.get_logger().debug("Waiting for sub-task to complete...")
 
         while not check_done_func():
             # 1. Überprüfen, ob die übergeordnete Mission vom User abgebrochen wurde
@@ -241,7 +239,7 @@ class MissionControllerNode(Node):
             self.get_logger().error("Sub-task finished, but reported FAILURE.")
             return False
 
-        self.get_logger().info("Sub-task completed successfully.")
+        self.get_logger().debug("Sub-task completed successfully.")
         return True
 
 def main(args=None):

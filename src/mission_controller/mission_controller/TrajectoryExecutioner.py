@@ -45,7 +45,7 @@ class TrajectoryExecutioner():
         start_msg.trajectory_id = self.trajectory_id
         start_msg.trajectory_status = TrajectoryBatch.START
 
-        self.node.get_logger().info("Waiting for START_ACK...")
+        self.node.get_logger().debug("Waiting for START_ACK...")
         timeout_counter = 0
         while not self._start_confirmed and self._is_running:
             if timeout_counter % 5 == 0:
@@ -55,7 +55,7 @@ class TrajectoryExecutioner():
                 self._is_running = False
             timeout_counter += 1
             time.sleep(0.01)
-        self.node.get_logger().info("START_ACK recieved")
+        self.node.get_logger().debug("START_ACK recieved")
 
         return True
     
@@ -70,12 +70,14 @@ class TrajectoryExecutioner():
                 self._start_confirmed = True
                 
             elif msg.trajectory_status == TrajectoryFeedback.REQUEST_DATA:
+                self.node.get_logger().debug(f"Recieved request for {msg.request_next_count} frames")
                 self.last_send_idx = msg.received_until_idx
                 self.last_hardware_idx = msg.current_hardware_idx
                 self.send_next_packets(msg.request_next_count)
                 
             elif msg.trajectory_status == TrajectoryFeedback.END_REACHED:
-                self.node.get_logger().info("Executioner recieved END--------------------")
+                self.node.get_logger().debug("Executioner recieved END")
+                self.last_hardware_idx = msg.current_hardware_idx
                 self._is_running = False
                 self._success = True
 
@@ -83,6 +85,7 @@ class TrajectoryExecutioner():
             self.node.get_logger().error("Wrong trajectory id recieved")
             self._is_running = False
 
+        self.node.get_logger().info(f"Publishing feedback hardware idx: {self.last_hardware_idx}")
         self.feedback_cb((self.last_hardware_idx / len(self.trajectory))*100.0)
 
     def send_next_packets(self, count_requested):
@@ -97,7 +100,8 @@ class TrajectoryExecutioner():
                 upper_limit = min(self.last_send_idx + 10, len(self.trajectory))
                 batch.data = self.trajectory[self.last_send_idx : upper_limit]
 
-                if upper_limit == len(self.trajectory):
+                if upper_limit >= len(self.trajectory):
+                    self.node.get_logger().debug("Sending last trajectory batch")
                     batch.trajectory_status = TrajectoryBatch.END
                 else:
                     batch.trajectory_status = TrajectoryBatch.RUNNING
@@ -111,8 +115,6 @@ class TrajectoryExecutioner():
                 sent_in_this_call += num_points
         
         else:
-            # Der STM32 fragt nach Daten, obwohl wir fertig sind.
-            # Wir senden zur Sicherheit das Ende inkl. des absolut letzten Punkts.
             redundant_batch = TrajectoryBatch()
             redundant_batch.trajectory_id = self.trajectory_id
             redundant_batch.trajectory_status = TrajectoryBatch.END
@@ -122,7 +124,7 @@ class TrajectoryExecutioner():
                 redundant_batch.data = [self.trajectory[-1]]
             
             self.trajectory_pub.publish(redundant_batch)
-            self.node.get_logger().info("Resending last point with END status.")
+            self.node.get_logger().debug("Resending last point with END status.")
 
     def cancel(self):
         self._is_running = False

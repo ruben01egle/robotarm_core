@@ -60,5 +60,6 @@ class JointSpacePlanner:
             
             if progress_cb and i % 10 == 0:
                 progress_cb(tau * 100.0)
-
+        if progress_cb:
+            progress_cb(100.0)
         return trajectory

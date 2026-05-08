@@ -5,6 +5,7 @@
     ],
     "service": "robotarm_core",
     "workspaceFolder": "/robotarm_core",
+    "initializeCommand": "xhost +local:docker",
     "runServices": ["robotarm_core"],
     "customizations": {
         "vscode": {

@@ -2,6 +2,8 @@ import rclpy
 from rclpy.time import Time
 from transitions import Machine
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from enum import IntEnum
 import math
@@ -76,7 +78,7 @@ class HardwareSimulationNode(Node):
         self.current_joint_angles = [0.0] * 6
 
         self.last_request_time = self.get_clock().now()
-        self.REQUEST_COOLDOWN = 0.05  # 50ms Cooldown zwischen Requests
+        self.REQUEST_COOLDOWN = 0.03  # 50ms Cooldown zwischen Requests
         
         # 1kHz Loop Simulation
         self.timer_loop = self.create_timer(0.001, self.control_loop_cb) # 1ms
@@ -200,7 +202,7 @@ class HardwareSimulationNode(Node):
             ack.trajectory_status = TrajectoryFeedback.START_ACK
             self.traj_feedback_pub.publish(ack)
             
-            self._request_more_data()
+            self._request_more_data(150)
             self.streaming_state = self.StreamState.INIT
             return
         
@@ -213,19 +215,19 @@ class HardwareSimulationNode(Node):
                 self.get_logger().info("Full trajectory received.")
                 self.streaming_state = self.StreamState.FINISHED
             
-            if self.streaming_state == self.StreamState.INIT:
+            if self.streaming_state == self.StreamState.INIT and len(self.trajectory_buffer) > 100:
                 self.streaming_state = self.StreamState.STREAMING
                 self.controll_running = True
 
     def control_loop_cb(self):
         """Die simulierten 1kHz (1ms) Hardware-Interrupt-Routine"""
-        if not self.controll_running:
+        if not self.controll_running or self.state == SystemState.ERROR:
             return
 
         # 1. Sollwert aus Puffer holen
         if len(self.trajectory_buffer) > 0:
             target_frame = self.trajectory_buffer.pop(0)
-            self.processed_idx += 1
+            self.processed_idx = target_frame.idx
             
             # Simulation: Wir "regeln" auf den Zielwert (hier einfach Kopieren mit Rauschen)
             current_frame = self._simulate_hardware_behavior(target_frame)
@@ -243,8 +245,9 @@ class HardwareSimulationNode(Node):
                 self._publish_telemetry_batch()
                 ack = TrajectoryFeedback()
                 ack.trajectory_id = self.current_trajectory_id
-                self.get_logger().info("HARDWARE END REACHED")
+                self.get_logger().info(f"HARDWARE END REACHED: {self.processed_idx}")
                 ack.trajectory_status = TrajectoryFeedback.END_REACHED
+                ack.current_hardware_idx = self.processed_idx
                 if self.traj_feedback_pub:
                     self.traj_feedback_pub.publish(ack)
                 self.streaming_state = self.StreamState.IDLE
@@ -269,7 +272,7 @@ class HardwareSimulationNode(Node):
                 # Prüfen, ob seit dem letzten Request genug Zeit vergangen ist (50ms)
                 duration = (now - self.last_request_time).nanoseconds / 1e9
                 if duration > self.REQUEST_COOLDOWN:
-                    self._request_more_data()
+                    self._request_more_data(50)
                     self.last_request_time = now                
 
 
@@ -298,12 +301,13 @@ class HardwareSimulationNode(Node):
         f.gripper = target_frame.gripper
         return f
 
-    def _request_more_data(self):
+    def _request_more_data(self, amount):
         """Sendet REQUEST_DATA an den Executioner"""
+        self.get_logger().debug(f"Requested data: {amount} at buffer len: {len(self.trajectory_buffer)}")
         msg = TrajectoryFeedback()
         msg.trajectory_id = self.current_trajectory_id
         msg.trajectory_status = TrajectoryFeedback.REQUEST_DATA
-        msg.request_next_count = 50 
+        msg.request_next_count = amount 
         msg.received_until_idx = self.processed_idx + len(self.trajectory_buffer)
         msg.current_hardware_idx = self.processed_idx
         self.traj_feedback_pub.publish(msg)
@@ -338,19 +342,19 @@ class HardwareSimulationNode(Node):
         self.heartbeat_client = HeartbeatClient(self)
         self.feedback_pub = self.create_publisher(HardwareFeedback, 'hardware/feedback', 10)
         self.command_sub = self.create_subscription(
-            HardwareCommand, 'hardware/command', self.hardware_command_cb, 10
+            HardwareCommand, 'hardware/command', self.hardware_command_cb, 10, callback_group=MutuallyExclusiveCallbackGroup()
         )
         self.hardware_feedbaack_pub = self.create_publisher(HardwareFeedback, 'hardware/feedback', 1)
         self.telemetry_pub = self.create_publisher(TelemetryBatch, 'telemetry', 1)
         qos_best_effort = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
-            depth=10
+            depth=50
         )
 
         # Subscriber für Trajektorie-Daten vom Executioner
         self.traj_sub = self.create_subscription(
-            TrajectoryBatch, 'trajectory/data', self.trajectory_data_cb, qos_best_effort
+            TrajectoryBatch, 'trajectory/data', self.trajectory_data_cb, qos_best_effort, callback_group=MutuallyExclusiveCallbackGroup()
         )
         
         # Publisher für Feedback zum Executioner
@@ -405,9 +409,12 @@ def main(args=None):
     rclpy.init(args=args)
     
     ros_node = HardwareSimulationNode()
+
+    executor = MultiThreadedExecutor()
+    executor.add_node(ros_node)
     
     try:
-        rclpy.spin(ros_node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:

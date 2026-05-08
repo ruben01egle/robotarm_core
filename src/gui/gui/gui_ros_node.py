@@ -80,13 +80,13 @@ class GuiRosNode(Node):
     def trajectory_cb(self, msg):
         t_id = msg.trajectory_id
         if msg.trajectory_status == TrajectoryBatch.START:
-            self.get_logger().info(f"--- NEW TRAJECTORY START: ID {t_id} ---")
+            self.get_logger().debug(f"--- GUI LOG NEW TRAJECTORY START: ID {t_id} ---")
             self.trajectory_buffer.clear()
             self.hold_joint_angles = []
         
+        last_target_list = None
         for frame in msg.data:
             key = (t_id, frame.idx)
-            #self.get_logger().info(f"[PLANNER] Adding to buffer: Key {key}")
             # Erstelle eine Liste von Dictionaries (eines pro Achse)
             # Format: [{'p':.., 'v':.., 't':..}, {...}, ...]
             target_list = []
@@ -98,9 +98,11 @@ class GuiRosNode(Node):
                 })
                 
             self.trajectory_buffer[key] = target_list
-            if msg.trajectory_status == TrajectoryBatch.END:
-                self.get_logger().info(f"--- TRAJECTORY DATA END: ID {t_id}, Total Frames: {frame.idx} ---")
-                self.hold_joint_angles = target_list
+            last_target_list = target_list
+
+        if msg.trajectory_status == TrajectoryBatch.END:
+            self.get_logger().debug(f"--- GUI LOG TRAJECTORY DATA END: ID {t_id} ---")
+            self.hold_joint_angles = last_target_list
 
     def telemetry_cb(self, msg):
         t_id = msg.trajectory_id
@@ -129,11 +131,14 @@ class GuiRosNode(Node):
                 if key in self.trajectory_buffer:
                     target_list = self.trajectory_buffer.pop(key)
                 else:
-                    #self.get_logger().error(f"[MISSING] Hardware sent Key {key}, but it's NOT in Buffer! Buffer Size: {len(self.trajectory_buffer)}")
+                    self.get_logger().debug(f"[MISSING] Hardware sent Key {key}, but it's NOT in Buffer! Buffer Size: {len(self.trajectory_buffer)}")
                     continue
             else:
                 continue
-            self.store.push_telemetry_frame(time_s, actual_list, target_list)
+            if len(actual_list) == 6 and len(target_list) == 6:
+                self.store.push_telemetry_frame(time_s, actual_list, target_list)
+            else:
+                self.get_logger().warn(f"Rejection: Act={len(actual_list)}, Ref={len(target_list)}")
 
     def log_cb(self, msg):
         levels = {20: "INFO", 30: "WARN", 40: "ERROR", 50: "FATAL"}
