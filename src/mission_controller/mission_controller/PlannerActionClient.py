@@ -3,9 +3,9 @@ from rclpy.action import ActionClient
 import time
 
 class PlannerActionClient:
-    def __init__(self, node, callback_on_feedback, channel, action_type, callback_group=None):
+    def __init__(self, node, channel, action_type, callback_group=None):
         self.node = node
-        self.on_feedback_user_cb = callback_on_feedback
+        self.clear_feedback_handler()
         
         self.client = ActionClient(self.node, action_type, channel, callback_group=callback_group)
         
@@ -29,7 +29,7 @@ class PlannerActionClient:
         
         send_goal_future = self.client.send_goal_async(
             goal_msg,
-            feedback_callback=self.on_feedback_user_cb
+            feedback_callback=self.feedback_cb
         )
 
         while not send_goal_future.done():
@@ -60,6 +60,11 @@ class PlannerActionClient:
             self._success = True
         else:
             self.node.get_logger().error("PlanTrajectoryClient: Planning failed on server side")
+
+    def feedback_cb(self, msg):
+        progress = msg.feedback.progress
+        if self._user_feedback_cb:
+            self._user_feedback_cb(progress)
     
     def is_planning_done(self):
         if self._result_future is None:
@@ -68,8 +73,14 @@ class PlannerActionClient:
     
     def is_success(self):
         return self._success
+    
+    def set_feedback_handler(self, callback):
+        self._user_feedback_cb = callback
 
-    def cancel_current_goal(self):
+    def clear_feedback_handler(self):
+        self._user_feedback_cb = None
+
+    def cancel(self):
         if self._goal_handle is not None:
             self.node.get_logger().info('sending cancel plan trajcetory request')
             self._goal_handle.cancel_goal_async()

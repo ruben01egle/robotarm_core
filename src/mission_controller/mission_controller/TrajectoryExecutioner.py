@@ -5,10 +5,10 @@ import time
 from interface.msg import TrajectoryBatch, TrajectoryFeedback
 
 class TrajectoryExecutioner():
-    def __init__(self, node, feedback_cb, callback_group=None):
+    def __init__(self, node, callback_group=None):
         self.node = node
 
-        self.feedback_cb = feedback_cb
+        self.clear_feedback_handler()
 
         self.trajectory_id = 1
         self.packet_num = 0
@@ -85,8 +85,8 @@ class TrajectoryExecutioner():
             self.node.get_logger().error("Wrong trajectory id recieved")
             self._is_running = False
 
-        self.node.get_logger().info(f"Publishing feedback hardware idx: {self.last_hardware_idx}")
-        self.feedback_cb((self.last_hardware_idx / len(self.trajectory))*100.0)
+        if self._feedback_cb:
+            self._feedback_cb(((self.last_hardware_idx+1) / len(self.trajectory))*100.0)
 
     def send_next_packets(self, count_requested):
         """Sendet die nächsten N Punkte in 10er Batches."""
@@ -134,4 +134,10 @@ class TrajectoryExecutioner():
 
     def is_success(self):
         return self._success
+    
+    def set_feedback_handler(self, callback):
+        self._feedback_cb = callback
+
+    def clear_feedback_handler(self):
+        self._feedback_cb = None
 

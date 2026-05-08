@@ -31,18 +31,14 @@ class MissionControllerNode(Node):
         self.heartbeat_client = HeartbeatClient(self)
         self.request_action_client = RequestActionClient(self)
         self.plan_p2p_jointspace_client = PlannerActionClient(self,
-                                                               self.plan_trajectory_feedback_cb,
                                                                "plan_trajectory/p2p_jointspace",
                                                                 PlanJointSpace,
                                                                callback_group=self.callback_group)
         self.plan_csv_client = PlannerActionClient(self,
-                                                    self.plan_trajectory_feedback_cb,
                                                     "plan_trajectory/csv",
                                                     PlanCSV,
                                                     callback_group=self.callback_group)
-        self.executener = TrajectoryExecutioner(self,
-                                                self.execute_trajectory_feedback_cb,
-                                                callback_group=MutuallyExclusiveCallbackGroup())
+        self.executener = TrajectoryExecutioner(self, callback_group=MutuallyExclusiveCallbackGroup())
 
         self.create_subscription(SystemState, 'system_state', self.system_state_cb, 1)
         self.create_subscription(TelemetryBatch, 'telemetry', self.telemetry_cb, qos_profile_telemetry)
@@ -69,6 +65,10 @@ class MissionControllerNode(Node):
             self.system_state = msg.state
 
     def telemetry_cb(self, msg):
+        if not msg.data:
+            self.get_logger().warn("Telemetrie message without data revieved")
+            return
+        
         self.current_robot_frame = msg.data[-1]
         self.current_joint_angles = [
             self.current_robot_frame.axis1.position,
@@ -140,12 +140,15 @@ class MissionControllerNode(Node):
     def mission_cancel_cb(self, goal_handle):
         self.get_logger().info("Mission stop requested")
         return CancelResponse.ACCEPT
-    
-    def plan_trajectory_feedback_cb(self, msg):
-        self.planning_progress = msg.feedback.progress
 
-    def execute_trajectory_feedback_cb(self, progress):
-        self.executing_progress = progress
+    def publish_mission_feedback(self, goal_handle, phase):
+        msg = Mission.Feedback()
+        msg.planning_progress = float(self.planning_progress)
+        msg.execution_progress = float(self.executing_progress)
+        msg.phase = phase
+        goal_handle.publish_feedback(msg)
+
+    # TODO: Refactor tasks into a separate library to reduce boilerplate (try-finally, feedback handling) and improve maintainability.
 
     def task_plan_p2p_jointspace(self, goal_handle, target_angles, scale):
         request = PlanJointSpace.Goal()
@@ -158,49 +161,72 @@ class MissionControllerNode(Node):
         request.waypoints = [start_pt, target_pt]
         request.motion_scale = scale
 
-        self.plan_p2p_jointspace_client.request_plan_trajectory(request)
-        success = self.wait_for_task(goal_handle,
-                                     self.plan_p2p_jointspace_client.is_planning_done,
-                                     self.plan_p2p_jointspace_client.is_success,
-                                     cancel_func=self.plan_p2p_jointspace_client.cancel_current_goal,
-                                     update_func=lambda: self.publish_mission_feedback(goal_handle, "PLANNING"))
-        if success:
-            self.planned_trajectory = self.plan_p2p_jointspace_client.trajectory
-        return success
+        def handle_progress(progress):
+            self.planning_progress = progress
+            self.publish_mission_feedback(
+                goal_handle, 
+                "PLANNING"
+            )
+        self.plan_p2p_jointspace_client.set_feedback_handler(handle_progress)
+
+        try:
+            self.plan_p2p_jointspace_client.request_plan_trajectory(request)
+            success = self.wait_for_task(goal_handle,
+                                        self.plan_p2p_jointspace_client.is_planning_done,
+                                        self.plan_p2p_jointspace_client.is_success,
+                                        cancel_func=self.plan_p2p_jointspace_client.cancel)
+            if success:
+                self.planned_trajectory = self.plan_p2p_jointspace_client.trajectory
+            return success
+        finally:
+            self.plan_p2p_jointspace_client.clear_feedback_handler()
     
     def task_plan_csv(self, goal_handle, csv):
         request = PlanCSV.Goal()
         request.csv_path = csv
-        self.plan_csv_client.request_plan_trajectory(request)
-        success = self.wait_for_task(goal_handle,
-                                     self.plan_csv_client.is_planning_done,
-                                     self.plan_csv_client.is_success,
-                                     cancel_func=self.plan_csv_client.cancel_current_goal,
-                                     update_func=lambda: self.publish_mission_feedback(goal_handle, "PLANNING"))
-        if success:
-                self.planned_trajectory = self.plan_csv_client.trajectory
-        return success
+
+        def handle_progress(progress):
+            self.planning_progress = progress
+            self.publish_mission_feedback(
+                goal_handle, 
+                "PLANNING"
+            )
+        self.plan_csv_client.set_feedback_handler(handle_progress)
+
+        try:
+            self.plan_csv_client.request_plan_trajectory(request)
+            success = self.wait_for_task(goal_handle,
+                                        self.plan_csv_client.is_planning_done,
+                                        self.plan_csv_client.is_success,
+                                        cancel_func=self.plan_csv_client.cancel)
+            if success:
+                    self.planned_trajectory = self.plan_csv_client.trajectory
+            return success
+        finally:
+            self.plan_csv_client.clear_feedback_handler()
     
     def task_execute_trajectory(self, goal_handle, trajectory):
-        if not self.executener.start_execution(trajectory):
-            return False
-        return self.wait_for_task(
-            goal_handle,
-            check_done_func=self.executener.is_done,
-            check_success_func=self.executener.is_success,
-            cancel_func=self.executener.cancel,
-            update_func=lambda: self.publish_mission_feedback(goal_handle, "EXECUTING"),
-            timeout_sec=15.0
-        )
+        def handle_progress(progress):
+            self.executing_progress = progress
+            self.publish_mission_feedback(
+                goal_handle, 
+                "EXECUTING"
+            )
+        self.executener.set_feedback_handler(handle_progress)
+        try:
+            if not self.executener.start_execution(trajectory):
+                return False
+            return self.wait_for_task(
+                goal_handle,
+                check_done_func=self.executener.is_done,
+                check_success_func=self.executener.is_success,
+                cancel_func=self.executener.cancel,
+                timeout_sec=300.0
+            )
+        finally:
+            self.executener.clear_feedback_handler()
 
-    def publish_mission_feedback(self, goal_handle, phase):
-        msg = Mission.Feedback()
-        msg.planning_progress = float(self.planning_progress)
-        msg.execution_progress = float(self.executing_progress)
-        msg.phase = phase
-        goal_handle.publish_feedback(msg)
-
-    def wait_for_task(self, goal_handle, check_done_func, check_success_func, cancel_func=None, update_func=None, timeout_sec=60.0):
+    def wait_for_task(self, goal_handle, check_done_func, check_success_func, cancel_func=None, timeout_sec=60.0):
         """
         Universelle Hilfsmethode, um auf den Abschluss eines Sub-Tasks zu warten.
         
@@ -229,11 +255,8 @@ class MissionControllerNode(Node):
                 if cancel_func:
                     cancel_func()
                 return False
-            
-            if update_func:
-                update_func()
 
-            time.sleep(0.1)
+            time.sleep(0.05)
 
         if not check_success_func():
             self.get_logger().error("Sub-task finished, but reported FAILURE.")
