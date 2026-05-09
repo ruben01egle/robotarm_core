@@ -309,7 +309,6 @@ class HardwareSimulationNode(Node):
         msg.trajectory_id = self.current_trajectory_id
         msg.trajectory_status = TrajectoryFeedback.REQUEST_DATA
         msg.request_next_count = amount 
-        msg.received_until_idx = self.processed_idx + len(self.trajectory_buffer)
         msg.current_hardware_idx = self.processed_idx
         self.traj_feedback_pub.publish(msg)
 
