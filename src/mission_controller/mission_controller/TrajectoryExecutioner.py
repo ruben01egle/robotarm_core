@@ -10,7 +10,7 @@ class TrajectoryExecutioner():
 
         self.clear_feedback_handler()
 
-        self.trajectory_id = 1
+        self.trajectory_id = 0
         self.packet_num = 0
         self.last_send_idx = 0
         self.last_hardware_idx = 0
@@ -71,7 +71,6 @@ class TrajectoryExecutioner():
                 
             elif msg.trajectory_status == TrajectoryFeedback.REQUEST_DATA:
                 self.node.get_logger().debug(f"Recieved request for {msg.request_next_count} frames")
-                self.last_send_idx = msg.received_until_idx
                 self.last_hardware_idx = msg.current_hardware_idx
                 self.send_next_packets(msg.request_next_count)
                 

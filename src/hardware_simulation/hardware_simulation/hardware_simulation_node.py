@@ -214,6 +214,7 @@ class HardwareSimulationNode(Node):
             if msg.trajectory_status == TrajectoryBatch.END:
                 self.get_logger().info("Full trajectory received.")
                 self.streaming_state = self.StreamState.FINISHED
+                self.controll_running = True
             
             if self.streaming_state == self.StreamState.INIT and len(self.trajectory_buffer) > 100:
                 self.streaming_state = self.StreamState.STREAMING

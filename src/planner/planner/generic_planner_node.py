@@ -59,20 +59,37 @@ class GenericPlannerNode(Node):
             ros_trajectory = []
             num_points = len(trajectory)
             self.get_logger().info(f"Planning successful. Generated {num_points} trajectory points.")
-            for i, point in enumerate(trajectory):
-                frame = TrajectoryFrame()
+            
+            if trajectory is not None and len(trajectory) > 0:
+                ros_trajectory = []
+                self.get_logger().info(f"Planning successful. Points: {len(trajectory)}")
                 
-                # SEHR WICHTIG: Den Index befüllen!
-                frame.idx = int(i)
-                # Angenommen point ist eine Liste/Array mit 6 Werten
-                for i in range(1, 7):
-                    axis = AxisData()
-                    axis.position = float(point[i-1])
-                    # Falls dein Planer auch Geschwindigkeiten liefern würde:
-                    # axis.velocity = float(point[i-1 + offset]) 
-                    setattr(frame, f"axis{i}", axis)
-                
-                ros_trajectory.append(frame)
+                for i, point in enumerate(trajectory):
+                    frame = TrajectoryFrame()
+                    frame.idx = int(i)
+                    
+                    # Dynamische Bestimmung der Gelenk-Anzahl
+                    num_joints = len(point.positions)
+                    
+                    for j in range(num_joints):
+                        # Wir erstellen den Attributnamen dynamisch (axis1, axis2, ...)
+                        # Da ROS-Messages oft 1-basiert benannt sind (axis1):
+                        axis_attr_name = f"axis{j+1}"
+                        
+                        # Prüfen, ob das Feld in der Message überhaupt existiert
+                        if hasattr(frame, axis_attr_name):
+                            axis = AxisData()
+                            axis.position = float(point.positions[j])
+                            axis.velocity = float(point.velocities[j])
+                            axis.torque   = float(point.torques[j])
+                            
+                            setattr(frame, axis_attr_name, axis)
+                        else:
+                            # Optional: Warnung, wenn mehr Gelenke geplant wurden als die Message unterstützt
+                            if i == 0: # Nur einmal loggen
+                                self.get_logger().warn(f"Message TrajectoryFrame hat kein Feld {axis_attr_name}!")
+                    
+                    ros_trajectory.append(frame)
         
             result.success = True
             result.trajectory = ros_trajectory

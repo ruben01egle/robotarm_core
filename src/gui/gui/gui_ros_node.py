@@ -5,6 +5,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from PyQt6.QtWidgets import QApplication
 import numpy as np
+import math
 
 from .robot_main_widget import RobotMainWindow
 from .data_store import GuiDataStore
@@ -92,8 +93,8 @@ class GuiRosNode(Node):
             target_list = []
             for axis in [frame.axis1, frame.axis2, frame.axis3, frame.axis4, frame.axis5, frame.axis6]:
                 target_list.append({
-                    'p': axis.position,
-                    'v': axis.velocity,
+                    'p': math.degrees(axis.position),
+                    'v': math.degrees(axis.velocity),
                     't': axis.torque
                 })
                 
@@ -115,10 +116,13 @@ class GuiRosNode(Node):
             actual_list = []
             for axis in [frame.axis1, frame.axis2, frame.axis3, frame.axis4, frame.axis5, frame.axis6]:
                 actual_list.append({
-                    'p': axis.position,
-                    'v': axis.velocity,
+                    'p': math.degrees(axis.position),
+                    'v': math.degrees(axis.velocity),
                     't': axis.torque
                 })
+
+            if self.hold_joint_angles is None or not self.hold_joint_angles:
+                self.hold_joint_angles = actual_list
 
             if self.state == SystemState.CONNECTED:
                 self.hold_joint_angles = actual_list
@@ -195,8 +199,8 @@ class GuiRosNode(Node):
     def start_motion_jointangles(self, angles, scale):
         self.store.set_progress(0, 0)
         self.get_logger().info('Start joint angle mission')
-        joint_angle_arr = np.array(angles, dtype=np.float32)
-        self.mission_client.request_mission(Mission.Goal.OPTION_SET_JOINT_ANGLES, None, joint_angle_arr, scale)
+        joint_angle_rad = np.deg2rad(angles).astype(np.float32)
+        self.mission_client.request_mission(Mission.Goal.OPTION_SET_JOINT_ANGLES, None, joint_angle_rad, scale)
 
     def start_motion_csv(self, path):
         self.store.set_progress(0, 0)

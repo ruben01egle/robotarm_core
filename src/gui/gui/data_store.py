@@ -1,9 +1,12 @@
 from collections import deque
 import threading
+import bisect
 
 class GuiDataStore:
     def __init__(self, maxlen=4000):
         self._lock = threading.Lock()
+
+        self._maxlen = maxlen
         
         # 1. Hochfrequente Daten (für die Plots)
         self.frames = deque(maxlen=maxlen)
@@ -69,9 +72,22 @@ class GuiDataStore:
         return logs
 
     # --- Getter for GUI ---
-    def get_plot_data(self, count=None):
+    def get_plot_data(self, seconds=4.0):
         with self._lock:
-            return list(self.frames)[-count:] if count else list(self.frames)
+            if not self.frames:
+                return []
+
+            last_time = self.frames[-1]['time']
+            cutoff_time = last_time - seconds
+
+            times = [f['time'] for f in self.frames]
+            start_idx = bisect.bisect_right(times, cutoff_time)
+
+            actual_count = len(self.frames) - start_idx
+            if actual_count > self._maxlen:
+                start_idx = len(self.frames) - self._maxlen
+
+            return list(self.frames)[start_idx:]
         
     def get_state(self):
         with self._lock:

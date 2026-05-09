@@ -8,13 +8,14 @@ class ManualControlWidget(QWidget):
     def __init__(self, store, parent=None,):
         super().__init__(parent)
         self.store = store
+        # TODO: read limits from urdf file
         self.limits = [
             (-180.0, 180.0),  # Achse 1
-            (-90.0, 90.0),    # Achse 2
-            (-150.0, 150.0),  # Achse 3
+            (-160.0, 20.0),   # Achse 2
+            (-120.0, 135.0),  # Achse 3
             (-180.0, 180.0),  # Achse 4
-            (-120.0, 120.0),  # Achse 5
-            (-360.0, 360.0),  # Achse 6
+            (-180.0, 180.0),  # Achse 5
+            (-180.0, 180.0),  # Achse 6
         ]
         self.sliders = []
         self.target_labels = [] # Anzeige für Slider-Stellung
