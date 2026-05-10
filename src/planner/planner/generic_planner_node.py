@@ -57,11 +57,8 @@ class GenericPlannerNode(Node):
         
         if trajectory is not None and len(trajectory) > 0:
             ros_trajectory = []
-            num_points = len(trajectory)
-            self.get_logger().info(f"Planning successful. Generated {num_points} trajectory points.")
             
             if trajectory is not None and len(trajectory) > 0:
-                ros_trajectory = []
                 self.get_logger().info(f"Planning successful. Points: {len(trajectory)}")
                 
                 for i, point in enumerate(trajectory):

@@ -5,7 +5,6 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 
-import time
 
 from interface.msg import SystemState, TelemetryBatch, JointAngles
 from interface.action import Mission, PlanJointSpace, PlanCSV
@@ -99,9 +98,10 @@ class MissionControllerNode(Node):
 
         self.planned_trajectory = []
 
+        rate = self.create_rate(2)
         while self.system_state != SystemState.MISSION:
             self.get_logger().debug("Waiting for state transition")
-            time.sleep(0.5)
+            rate.sleep()
 
         self.get_logger().info("Starting mission")
 
@@ -177,6 +177,9 @@ class MissionControllerNode(Node):
                                         cancel_func=self.plan_p2p_jointspace_client.cancel)
             if success:
                 self.planned_trajectory = self.plan_p2p_jointspace_client.trajectory
+                if len(self.planned_trajectory) <= 0:
+                    self.get_logger().error(f"Recieved empty trajectory")
+                    success = False  
             return success
         finally:
             self.plan_p2p_jointspace_client.clear_feedback_handler()
@@ -238,6 +241,7 @@ class MissionControllerNode(Node):
         start_time = self.get_clock().now()
         self.get_logger().debug("Waiting for sub-task to complete...")
 
+        rate = self.create_rate(20)
         while not check_done_func():
             # 1. Überprüfen, ob die übergeordnete Mission vom User abgebrochen wurde
             if goal_handle.is_cancel_requested:
@@ -256,7 +260,7 @@ class MissionControllerNode(Node):
                     cancel_func()
                 return False
 
-            time.sleep(0.05)
+            rate.sleep()
 
         if not check_success_func():
             self.get_logger().error("Sub-task finished, but reported FAILURE.")

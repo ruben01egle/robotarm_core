@@ -1,7 +1,5 @@
 from rclpy.action import ActionClient
 
-import time
-
 class PlannerActionClient:
     def __init__(self, node, channel, action_type, callback_group=None):
         self.node = node
@@ -12,6 +10,7 @@ class PlannerActionClient:
         self._result_future = None
         self._goal_handle = None
 
+        self._is_done = False
         self._success = False
         self.trajectory = []
 
@@ -19,6 +18,7 @@ class PlannerActionClient:
         """Startet die Action."""
         self._result_future = None
         self.trajectory = []
+        self._is_done = False
         self._success = False
         if not self.client.wait_for_server(timeout_sec=1.0):
             self.node.get_logger().error("Action Server to plan trajectory not online")
@@ -32,8 +32,9 @@ class PlannerActionClient:
             feedback_callback=self.feedback_cb
         )
 
+        rate = self.node.create_rate(10)
         while not send_goal_future.done():
-            time.sleep(0.01)
+            rate.sleep()
 
         self._goal_handle = send_goal_future.result()
         if self._goal_handle is None:
@@ -55,11 +56,12 @@ class PlannerActionClient:
         result = future.result().result
 
         if result.success:
-            self.node.get_logger().info("PlanTrajectoryClient: Trajectory received")
+            self.node.get_logger().info(f"PlanTrajectoryClient: Trajectory received: {len(result.trajectory)}")
             self.trajectory = result.trajectory
             self._success = True
         else:
             self.node.get_logger().error("PlanTrajectoryClient: Planning failed on server side")
+        self._is_done = True
 
     def feedback_cb(self, msg):
         progress = msg.feedback.progress
@@ -67,9 +69,7 @@ class PlannerActionClient:
             self._user_feedback_cb(progress)
     
     def is_planning_done(self):
-        if self._result_future is None:
-            return False
-        return self._result_future.done()
+        return self._is_done
     
     def is_success(self):
         return self._success

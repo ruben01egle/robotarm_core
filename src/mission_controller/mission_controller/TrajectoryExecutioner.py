@@ -1,7 +1,5 @@
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
-import time
-
 from interface.msg import TrajectoryBatch, TrajectoryFeedback
 
 class TrajectoryExecutioner():
@@ -34,6 +32,9 @@ class TrajectoryExecutioner():
         if self._is_running:
             return False
         self.trajectory = trajectory
+        if len(self.trajectory) <= 0:
+            self.node.get_logger().error(f"Executioner revieved empty trajectory")
+            return False
         self.trajectory_id += 1
         self.last_send_idx = 0
         self.last_hardware_idx = 0
@@ -47,6 +48,7 @@ class TrajectoryExecutioner():
 
         self.node.get_logger().debug("Waiting for START_ACK...")
         timeout_counter = 0
+        rate = self.node.create_rate(10)
         while not self._start_confirmed and self._is_running:
             if timeout_counter % 5 == 0:
                 self.trajectory_pub.publish(start_msg)
@@ -54,7 +56,7 @@ class TrajectoryExecutioner():
                 self.node.get_logger().error("START_ACK timeout")
                 self._is_running = False
             timeout_counter += 1
-            time.sleep(0.01)
+            rate.sleep()
         self.node.get_logger().debug("START_ACK recieved")
 
         return True
@@ -117,7 +119,6 @@ class TrajectoryExecutioner():
             redundant_batch = TrajectoryBatch()
             redundant_batch.trajectory_id = self.trajectory_id
             redundant_batch.trajectory_status = TrajectoryBatch.END
-            redundant_batch.packet_num = self.packet_num - 1
             
             if len(self.trajectory) > 0:
                 redundant_batch.data = [self.trajectory[-1]]

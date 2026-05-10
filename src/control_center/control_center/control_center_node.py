@@ -4,7 +4,6 @@ from transitions import Machine
 from rclpy.node import Node
 from enum import IntEnum
 import socket
-import time
 
 from interface.msg import SystemState, Heartbeat, HeartbeatQuery, HardwareActions, HardwareCommand, HardwareFeedback
 from interface.srv import RequestAction

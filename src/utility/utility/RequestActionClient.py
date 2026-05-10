@@ -26,8 +26,9 @@ class RequestActionClient:
 
         if blocking:
             # --- SYNCHRONER MODUS ---
+            rate = self.node.create_rate(10)
             future = self.client.call_async(request)
-            while not future.done(): time.sleep(0.01)
+            while not future.done(): rate.sleep()
             
             return self._process_response(future)
         else:

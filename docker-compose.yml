@@ -1,11 +1,10 @@
-version: '3.8'
-
 services:
   robotarm_core:
     build:
       context: .
       dockerfile: .devcontainer/Dockerfile
     network_mode: host
+    ipc: host
     privileged: true
     environment:
       - QT_QPA_PLATFORM=xcb
@@ -13,10 +12,12 @@ services:
       - .:/robotarm_core
       - /etc/localtime:/etc/localtime:ro
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
-    command: /bin/bash -c "source /opt/ros/humble/setup.bash && tail -f /dev/null"
+    command: /bin/bash -c "source /opt/ros/jazzy/setup.bash && tail -f /dev/null"
 
   micro-ros-agent:
-    image: microros/micro-ros-agent:humble
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile.agent
     network_mode: host
     privileged: true
     command: udp4 --port 8888
