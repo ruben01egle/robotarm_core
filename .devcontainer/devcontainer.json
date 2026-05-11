@@ -6,7 +6,10 @@
     "service": "robotarm_core",
     "workspaceFolder": "/robotarm_core",
     "initializeCommand": "xhost +local:docker",
-    "runServices": ["robotarm_core"],
+    "runServices": [
+        "robotarm_core",
+        "micro-ros-agent"
+    ],
     "customizations": {
         "vscode": {
             "extensions": [
