@@ -38,7 +38,7 @@ class GuiRosNode(Node):
 
         self.create_subscription(SystemState, 'system_state', self.system_state_cb, 1)
         self.create_subscription(Log, '/rosout', self.log_cb, 10)
-        self.create_subscription(TelemetryBatch, 'telemetry', self.telemetry_cb, 50)
+        self.create_subscription(TelemetryBatch, 'telemetry', self.telemetry_cb, qos_profile)
         self.create_subscription(TrajectoryBatch, 'trajectory/data', self.trajectory_cb, qos_profile)
 
         self.stop_pub = self.create_publisher(StopCommand, 'system_stop', 1)

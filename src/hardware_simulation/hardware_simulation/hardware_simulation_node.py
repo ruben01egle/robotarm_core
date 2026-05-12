@@ -62,7 +62,7 @@ class HardwareSimulationNode(Node):
         ]
         self.machine = Machine(model=self, states=self.State, transitions=transitions, initial=self.State.IDLE)
 
-        self.hardware_feedbaack_pub = None
+        self.hardware_feedback_pub = None
         self.telemetry_pub = None
 
         self.telemetry_packet_count = 0
@@ -179,8 +179,8 @@ class HardwareSimulationNode(Node):
                 f"INVALID TRANSITION: Cannot execute '{trigger}' while in state '{self.state.name}'"
             )
             response.success = False
-        if self.hardware_feedbaack_pub:
-            self.hardware_feedbaack_pub.publish(response)
+        if self.hardware_feedback_pub:
+            self.hardware_feedback_pub.publish(response)
         else:
             self.get_logger().error("Ros init did not provide all publishers")
 
@@ -340,21 +340,25 @@ class HardwareSimulationNode(Node):
         """Erstellt Publisher/Subscriber"""
         self.start_time = self.get_clock().now()
         self.heartbeat_client = HeartbeatClient(self)
-        self.feedback_pub = self.create_publisher(HardwareFeedback, 'hardware/feedback', 10)
         self.command_sub = self.create_subscription(
             HardwareCommand, 'hardware/command', self.hardware_command_cb, 10, callback_group=MutuallyExclusiveCallbackGroup()
         )
-        self.hardware_feedbaack_pub = self.create_publisher(HardwareFeedback, 'hardware/feedback', 1)
-        self.telemetry_pub = self.create_publisher(TelemetryBatch, 'telemetry', 1)
-        qos_best_effort = QoSProfile(
+        self.hardware_feedback_pub = self.create_publisher(HardwareFeedback, 'hardware/feedback', 1)
+        qos_telemetry = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=3
+        )
+        self.telemetry_pub = self.create_publisher(TelemetryBatch, 'telemetry', qos_telemetry)
+
+        # Subscriber für Trajektorie-Daten vom Executioner
+        qos_trajectory = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
             depth=50
         )
-
-        # Subscriber für Trajektorie-Daten vom Executioner
         self.traj_sub = self.create_subscription(
-            TrajectoryBatch, 'trajectory/data', self.trajectory_data_cb, qos_best_effort, callback_group=MutuallyExclusiveCallbackGroup()
+            TrajectoryBatch, 'trajectory/data', self.trajectory_data_cb, qos_trajectory, callback_group=MutuallyExclusiveCallbackGroup()
         )
         
         # Publisher für Feedback zum Executioner
@@ -369,15 +373,15 @@ class HardwareSimulationNode(Node):
         
         if self.command_sub:
             self.destroy_subscription(self.command_sub)
-        if self.feedback_pub:
-            self.destroy_publisher(self.feedback_pub)
+        if self.hardware_feedback_pub:
+            self.destroy_publisher(self.hardware_feedback_pub)
         if self.telemetry_pub:
             self.destroy_publisher(self.telemetry_pub)
         if self.heartbeat_client:
             self.heartbeat_client.destroy() 
             
         self.command_sub = None
-        self.feedback_pub = None
+        self.hardware_feedback_pub = None
         self.heartbeat_client = None
         self.disconnect() # type: ignore
 
