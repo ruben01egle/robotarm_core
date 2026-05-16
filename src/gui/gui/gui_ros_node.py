@@ -27,7 +27,7 @@ class GuiRosNode(Node):
         self.store = data_store
         self.state = SystemState.IDLE
         self.config_requested = False
-        self.hold_joint_angles = []
+        self.joint_target = []
         self.trajectory_buffer = {}
 
         qos_profile = QoSProfile(
@@ -59,6 +59,7 @@ class GuiRosNode(Node):
         new_state_str = STATE_MAP.get(new_state, ("UNKNOWN"))
         if self.state != new_state:
             if new_state == SystemState.IDLE:
+                self.joint_target = []
                 self.store.clear_store()
                 self.config_requested = False
                 self.store.set_status(state=new_state_str, connected=False, armed=False)
@@ -83,9 +84,7 @@ class GuiRosNode(Node):
         if msg.trajectory_status == TrajectoryBatch.START:
             self.get_logger().debug(f"--- GUI LOG NEW TRAJECTORY START: ID {t_id} ---")
             self.trajectory_buffer.clear()
-            self.hold_joint_angles = []
         
-        last_target_list = None
         for frame in msg.data:
             key = (t_id, frame.idx)
             # Erstelle eine Liste von Dictionaries (eines pro Achse)
@@ -99,11 +98,9 @@ class GuiRosNode(Node):
                 })
                 
             self.trajectory_buffer[key] = target_list
-            last_target_list = target_list
 
         if msg.trajectory_status == TrajectoryBatch.END:
             self.get_logger().debug(f"--- GUI LOG TRAJECTORY DATA END: ID {t_id} ---")
-            self.hold_joint_angles = last_target_list
 
     def telemetry_cb(self, msg):
         t_id = msg.trajectory_id
@@ -121,30 +118,15 @@ class GuiRosNode(Node):
                     't': axis.torque
                 })
 
-            if self.hold_joint_angles is None or not self.hold_joint_angles:
-                self.hold_joint_angles = actual_list
-
-            if self.state == SystemState.CONNECTED:
-                self.hold_joint_angles = actual_list
-                target_list = self.hold_joint_angles
-            elif self.state == SystemState.ARMED:
-                target_list = self.hold_joint_angles
-            elif self.state == SystemState.MISSION and msg.trajectory_id == 0:
-                target_list = self.hold_joint_angles
-            elif self.state == SystemState.MISSION:
-                if key in self.trajectory_buffer:
-                    target_list = self.trajectory_buffer.pop(key)
-                    self.hold_joint_angles = target_list
-                else:
-                    #self.get_logger().debug(f"[MISSING] Hardware sent Key {key}, but it's NOT in Buffer! Buffer Size: {len(self.trajectory_buffer)}")
-                    #continue       TODO
-                    target_list = self.hold_joint_angles
+            if key in self.trajectory_buffer:
+                self.joint_target = self.trajectory_buffer.pop(key)
+            elif not self.joint_target:
+                self.joint_target = actual_list
+                
+            if len(actual_list) == 6 and len(self.joint_target) == 6:
+                self.store.push_telemetry_frame(time_s, actual_list, self.joint_target)
             else:
-                continue
-            if len(actual_list) == 6 and len(target_list) == 6:
-                self.store.push_telemetry_frame(time_s, actual_list, target_list)
-            else:
-                self.get_logger().warn(f"Rejection: Act={len(actual_list)}, Ref={len(target_list)}")
+                self.get_logger().warn(f"Rejection: Act={len(actual_list)}, Ref={len(self.joint_target)}")
 
     def log_cb(self, msg):
         levels = {20: "INFO", 30: "WARN", 40: "ERROR", 50: "FATAL"}

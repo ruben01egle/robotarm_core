@@ -117,7 +117,7 @@ class TrajectoryExecutioner():
 
                 import time
                 if count_requested > 100:
-                    time.sleep(0.10)
+                    time.sleep(0.05)
         
         else:
             redundant_batch = TrajectoryBatch()

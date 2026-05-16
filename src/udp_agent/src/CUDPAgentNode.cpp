@@ -1,5 +1,4 @@
 #include "udp_agent/CUDPAgentNode.hpp"
-#include "udp_agent/CUDPAgentNode.hpp"
 
 CUDPAgent::CUDPAgent(): Node("udp_agent_node")
 {
@@ -158,7 +157,6 @@ void CUDPAgent::publish(const TelemetryBatch &msg)
         mapAxis(rosFrame.axis6, udpFrame.axis6);
     }
 
-    RCLCPP_INFO(get_logger(), "Sent trajectory");
     mTelemetryPub->publish(msgROS);
 }
 
@@ -217,7 +215,7 @@ void CUDPAgent::udpSend(const interface::msg::TrajectoryBatch::SharedPtr msg)
         mapAxisToUDP(udpFrame.axis6, rosFrame.axis6);
     }
 
-    RCLCPP_INFO(get_logger(), "Sending trajectory batch (ID: %d, Packet: %d, Status: %d, Elements: %d)", 
+    RCLCPP_DEBUG(get_logger(), "Sending trajectory batch (ID: %d, Packet: %d, Status: %d, Elements: %d)", 
                 msgUDP.trajectory_id, msgUDP.packet_num, static_cast<int>(msgUDP.trajectory_status), msgUDP.data_count);
 
     mUDPClient->sendMessage(MessageType::TRAJECTORY_BATCH, msgUDP);

@@ -98,8 +98,6 @@ void CUDPClient::receiveWorker() {
     sockaddr_in fromAddr{};
     socklen_t fromLen = sizeof(fromAddr);
 
-    logger("Starting background thread");
-
     while (mRunning) {
         ssize_t receivedBytes = recvfrom(mSocketFd, buffer, MAX_PACKET_SIZE, 0,
                                          reinterpret_cast<struct sockaddr*>(&fromAddr), &fromLen);

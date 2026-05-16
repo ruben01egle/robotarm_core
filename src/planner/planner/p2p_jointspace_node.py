@@ -28,7 +28,7 @@ def main(args=None):
         max_pos=max_pos,
         max_v=max_v,
         max_tau=max_tau,
-        dt=0.001
+        dt=0.001            # TODO: magic numbers
     )
 
     # 2. Erstelle die generische Node
