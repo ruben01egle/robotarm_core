@@ -1,28 +1,43 @@
 {
     "name": "Robotarm Dev Environment",
-    "dockerComposeFile": [
-        "../docker-compose.yml"
-    ],
-    "service": "robotarm_core",
+    "build": {
+        "context": "..",
+        "dockerfile": "./Dockerfile"
+    },
     "workspaceFolder": "/robotarm_core",
     "initializeCommand": "xhost +local:docker",
-    "runServices": [
-        "robotarm_core",
-        "micro-ros-agent"
+    
+    "runArgs": [
+        "--network=host",
+        "--ipc=host",
+        "--privileged"
     ],
+
+    "mounts": [
+        "source=${localWorkspaceFolder},target=/robotarm_core,type=bind",
+        "source=/etc/localtime,target=/etc/localtime,type=bind,ro",
+        "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind"
+    ],
+
+    "containerEnv": {
+        "QT_QPA_PLATFORM": "xcb"
+    },
+
     "customizations": {
         "vscode": {
             "extensions": [
-            "ms-python.python",
-            "ms-iot.vscode-ros",
-            "njpwerner.autodocstring",
-            "ms-vscode.cpptools",
-            "ms-vscode.cmake-tools",
-            "twxe.cmake",
-            "redhat.vscode-xml",
-            "redhat.vscode-yaml",
-            "smilerobotics.urdf"
-        ]
+                "ms-python.python",
+                "ms-iot.vscode-ros",
+                "njpwerner.autodocstring",
+                "ms-vscode.cpptools",
+                "ms-vscode.cmake-tools",
+                "ms-vscode.cpptools-extension-pack",
+                "twxe.cmake",
+                "redhat.vscode-xml",
+                "redhat.vscode-yaml",
+                "smilerobotics.urdf",
+                "sanaajani.taskrunnercode"
+            ]
         }
     },
     "remoteUser": "root"

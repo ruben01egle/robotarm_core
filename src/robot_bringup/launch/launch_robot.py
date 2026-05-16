@@ -37,4 +37,12 @@ def generate_launch_description():
             output='screen',
             ros_arguments=extra_args
         ),
+
+        Node(
+            package='udp_agent',
+            executable='udp_agent_node',
+            name='udp_agent_node',
+            output='screen',
+            ros_arguments=extra_args
+        ),
     ])

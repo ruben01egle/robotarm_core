@@ -98,7 +98,7 @@ class TrajectoryExecutioner():
                 batch = TrajectoryBatch()
                 batch.trajectory_id = self.trajectory_id
                 
-                upper_limit = min(self.last_send_idx + 10, len(self.trajectory))
+                upper_limit = min(self.last_send_idx + 10, len(self.trajectory))        # TODO: magic number
                 batch.data = self.trajectory[self.last_send_idx : upper_limit]
 
                 if upper_limit >= len(self.trajectory):
@@ -114,6 +114,10 @@ class TrajectoryExecutioner():
                 self.packet_num += 1
                 self.last_send_idx += num_points
                 sent_in_this_call += num_points
+
+                import time
+                if count_requested > 100:
+                    time.sleep(0.10)
         
         else:
             redundant_batch = TrajectoryBatch()

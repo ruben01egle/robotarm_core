@@ -129,7 +129,7 @@ class HardwareSimulationNode(Node):
         diff_time = self.get_clock().now() - self.start_time
         # Umrechnung in Mikrosekunden
         frame.time_us = int(diff_time.nanoseconds / 1000)
-        frame.idx = batch.packet_num # Index innerhalb der Sequenz
+        frame.idx = 0 # Index innerhalb der Sequenz
         
         # 3. Signale generieren (Beispiel: Sinus-Wellen für alle Achsen)
         # Nutze die Zeit für eine flüssige Bewegung
@@ -262,7 +262,7 @@ class HardwareSimulationNode(Node):
         # 2. Telemetrie sammeln
         self.telemetry_accumulator.append(current_frame)
         
-        if len(self.telemetry_accumulator) >= 10:
+        if len(self.telemetry_accumulator) >= 5:
             self._publish_telemetry_batch()
 
         # 3. Flow Control: Neue Daten anfordern wenn Puffer leerer wird
@@ -313,7 +313,7 @@ class HardwareSimulationNode(Node):
         self.traj_feedback_pub.publish(msg)
 
     def _publish_telemetry_batch(self):
-        """Verschickt die gesammelten 10 Frames"""
+        """Verschickt die gesammelten 5 Frames"""
         batch = TelemetryBatch()
         batch.trajectory_id = self.current_trajectory_id
         batch.packet_num = self.telemetry_packet_count

@@ -1,0 +1,15 @@
+{
+    "python.autoComplete.extraPaths": [
+        "${workspaceFolder}/install/interface/lib/python3.12/site-packages",
+        "${workspaceFolder}/src/utility",
+        "/opt/ros/jazzy/lib/python3.10/site-packages",
+        "/opt/ros/jazzy/local/lib/python3.10/dist-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/install/interface/lib/python3.12/site-packages",
+        "${workspaceFolder}/src/utility",
+        "/opt/ros/jazzy/lib/python3.10/site-packages",
+        "/opt/ros/jazzy/local/lib/python3.10/dist-packages"
+    ],
+    "cmake.sourceDirectory": "/robotarm_core/src/udp_agent"
+}

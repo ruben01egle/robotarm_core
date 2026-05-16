@@ -134,9 +134,11 @@ class GuiRosNode(Node):
             elif self.state == SystemState.MISSION:
                 if key in self.trajectory_buffer:
                     target_list = self.trajectory_buffer.pop(key)
+                    self.hold_joint_angles = target_list
                 else:
-                    self.get_logger().debug(f"[MISSING] Hardware sent Key {key}, but it's NOT in Buffer! Buffer Size: {len(self.trajectory_buffer)}")
-                    continue
+                    #self.get_logger().debug(f"[MISSING] Hardware sent Key {key}, but it's NOT in Buffer! Buffer Size: {len(self.trajectory_buffer)}")
+                    #continue       TODO
+                    target_list = self.hold_joint_angles
             else:
                 continue
             if len(actual_list) == 6 and len(target_list) == 6:

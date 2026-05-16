@@ -24,17 +24,13 @@ class ControlCenterNode(Node):
         super().__init__('control_center_node')
 
         self.heartbeat_query_id = 0
-        self.LATENCY_WARNING_THRESHOLD = 0.05
+        self.LATENCY_WARNING_THRESHOLD = 0.1
         self.LATENCY_ERROR_THRESHOLD = 0.2
         self.MAX_MISSED_QUERIES = 5
         # Structure: { 'node_name': {'last_query_id': int, 'latency': float} }
         self.tracked_nodes = {}
 
-        self.BEACON_PORT = 6666 
-        self.BEACON_SIGNATURE = b"ROS2"
         self.HADWARE_SIGNATURE = "stm32"
-        self.beacon_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.beacon_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
         self.command_id = 0
         self.pending_command = False
@@ -137,10 +133,7 @@ class ControlCenterNode(Node):
             if self.is_hw_connected():
                 self.get_logger().info("Hardware node registered")
                 self.connect() # type: ignore
-            try:
-                self.beacon_sock.sendto(self.BEACON_SIGNATURE, ('<broadcast>', self.BEACON_PORT))
-            except Exception as e:
-                self.get_logger().error(f"Beacon failed: {e}")
+
         elif self.state == self.State.CONNECTED:
             if not self.is_hw_connected():
                 if self.pending_command:
