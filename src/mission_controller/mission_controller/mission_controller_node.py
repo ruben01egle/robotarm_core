@@ -63,20 +63,13 @@ class MissionControllerNode(Node):
     def system_state_cb(self, msg):
             self.system_state = msg.state
 
-    def telemetry_cb(self, msg):
+    def telemetry_cb(self, msg: TelemetryBatch):
         if not msg.data:
             self.get_logger().warn("Telemetrie message without data revieved")
             return
         
-        self.current_robot_frame = msg.data[-1]
-        self.current_joint_angles = [
-            self.current_robot_frame.axis1.position,
-            self.current_robot_frame.axis2.position,
-            self.current_robot_frame.axis3.position,
-            self.current_robot_frame.axis4.position,
-            self.current_robot_frame.axis5.position,
-            self.current_robot_frame.axis6.position
-        ]
+        self.current_robot_frame = msg.data[-1] # type: ignore
+        self.current_joint_angles = [axis.position for axis in self.current_robot_frame.axes]
 
     def mission_goal_cb(self, goal_request):
         if goal_request.option == Mission.Goal.OPTION_SET_JOINT_ANGLES:

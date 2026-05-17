@@ -73,10 +73,18 @@ CUDPAgent::CUDPAgent(): Node("udp_agent_node")
 void CUDPAgent::rawUDPDataCB(MessageType type, const uint8_t *data, uint32_t length)
 {
     switch (type) {
-        case MessageType::HARDWARE_FEEDBACK:   unpackAndPublish<HardwareFeedback>(data, length); break;
-        case MessageType::HEARTBEAT:           unpackAndPublish<Heartbeat>(data, length); break;
-        case MessageType::TRAJECTORY_FEEDBACK: unpackAndPublish<TrajectoryFeedback>(data, length); break;
-        case MessageType::TELEMETRY_BATCH:     unpackAndPublish<TelemetryBatch>(data, length); break;
+        case MessageType::HARDWARE_FEEDBACK:
+            unpackAndPublish<HardwareFeedback>(data, length);
+            break;
+        case MessageType::HEARTBEAT:
+            unpackAndPublish<Heartbeat>(data, length);
+            break;
+        case MessageType::TRAJECTORY_FEEDBACK: 
+            unpackAndPublish<TrajectoryFeedback>(data, length);
+            break;
+        case MessageType::TELEMETRY_BATCH:
+            unpackAndPublish<TelemetryBatch>(data, length);
+            break;
         default:
             RCLCPP_WARN(get_logger(), "Unknown MessageType: %d", static_cast<int>(type));
             break;
@@ -88,6 +96,7 @@ void CUDPAgent::publish(const HardwareFeedback &msg)
 {
     interface::msg::HardwareFeedback msgROS;
 
+    msgROS.type = msg.type;
     msgROS.action = msg.action;
     msgROS.command_id = msg.command_id;
     msgROS.current_state = msg.current_state;
@@ -149,12 +158,9 @@ void CUDPAgent::publish(const TelemetryBatch &msg)
         rosFrame.idx     = udpFrame.idx;
         rosFrame.gripper = udpFrame.gripper;
 
-        mapAxis(rosFrame.axis1, udpFrame.axis1);
-        mapAxis(rosFrame.axis2, udpFrame.axis2);
-        mapAxis(rosFrame.axis3, udpFrame.axis3);
-        mapAxis(rosFrame.axis4, udpFrame.axis4);
-        mapAxis(rosFrame.axis5, udpFrame.axis5);
-        mapAxis(rosFrame.axis6, udpFrame.axis6);
+        for (size_t i=0; i < TelemetryFrame::AXES_SIZE; i++) {
+            mapAxis(rosFrame.axes[i], udpFrame.axes[i]);
+        }
     }
 
     mTelemetryPub->publish(msgROS);
@@ -193,7 +199,7 @@ void CUDPAgent::udpSend(const interface::msg::TrajectoryBatch::SharedPtr msg)
     uint32_t valid_elements = std::min(static_cast<uint32_t>(msg->data.size()), msgUDP.MAX_DATA_SIZE);
     msgUDP.data_count = valid_elements;
 
-    auto mapAxisToUDP = [](AxisData& udpAxis, const interface::msg::AxisData& rosAxis) {
+    auto mapAxis = [](AxisData& udpAxis, const interface::msg::AxisData& rosAxis) {
         udpAxis.position = rosAxis.position;
         udpAxis.velocity = rosAxis.velocity;
         udpAxis.torque   = rosAxis.torque;
@@ -207,12 +213,9 @@ void CUDPAgent::udpSend(const interface::msg::TrajectoryBatch::SharedPtr msg)
         udpFrame.idx     = rosFrame.idx;
         udpFrame.gripper = rosFrame.gripper;
 
-        mapAxisToUDP(udpFrame.axis1, rosFrame.axis1);
-        mapAxisToUDP(udpFrame.axis2, rosFrame.axis2);
-        mapAxisToUDP(udpFrame.axis3, rosFrame.axis3);
-        mapAxisToUDP(udpFrame.axis4, rosFrame.axis4);
-        mapAxisToUDP(udpFrame.axis5, rosFrame.axis5);
-        mapAxisToUDP(udpFrame.axis6, rosFrame.axis6);
+        for (size_t i=0; i < TrajectoryFrame::AXES_SIZE; i++) {
+            mapAxis(udpFrame.axes[i], rosFrame.axes[i]);
+        }
     }
 
     RCLCPP_DEBUG(get_logger(), "Sending trajectory batch (ID: %d, Packet: %d, Status: %d, Elements: %d)", 

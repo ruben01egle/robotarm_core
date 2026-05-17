@@ -64,27 +64,21 @@ class GenericPlannerNode(Node):
                 for i, point in enumerate(trajectory):
                     frame = TrajectoryFrame()
                     frame.idx = int(i)
+                    frame.axes = []
                     
-                    # Dynamische Bestimmung der Gelenk-Anzahl
                     num_joints = len(point.positions)
+                    if num_joints > 6:                  # TODO: magic number
+                        if i == 0:
+                            self.get_logger().warn(f"Planner delivers {num_joints} joints, ROS only supports {6}!")
+                        num_joints = 6
                     
                     for j in range(num_joints):
-                        # Wir erstellen den Attributnamen dynamisch (axis1, axis2, ...)
-                        # Da ROS-Messages oft 1-basiert benannt sind (axis1):
-                        axis_attr_name = f"axis{j+1}"
+                        axis = AxisData()
+                        axis.position = float(point.positions[j])
+                        axis.velocity = float(point.velocities[j])
+                        axis.torque   = float(point.torques[j])
                         
-                        # Prüfen, ob das Feld in der Message überhaupt existiert
-                        if hasattr(frame, axis_attr_name):
-                            axis = AxisData()
-                            axis.position = float(point.positions[j])
-                            axis.velocity = float(point.velocities[j])
-                            axis.torque   = float(point.torques[j])
-                            
-                            setattr(frame, axis_attr_name, axis)
-                        else:
-                            # Optional: Warnung, wenn mehr Gelenke geplant wurden als die Message unterstützt
-                            if i == 0: # Nur einmal loggen
-                                self.get_logger().warn(f"Message TrajectoryFrame hat kein Feld {axis_attr_name}!")
+                        frame.axes.append(axis)
                     
                     ros_trajectory.append(frame)
         

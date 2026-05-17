@@ -81,6 +81,11 @@ class TrajectoryExecutioner():
                 self.last_hardware_idx = msg.current_hardware_idx
                 self._is_running = False
                 self._success = True
+            
+            elif msg.trajectory_status == TrajectoryFeedback.ERROR:
+                self.node.get_logger().error("Trajectory Execution ended with error")
+                self._is_running = False
+                self._success = False
 
         else:
             self.node.get_logger().error("Wrong trajectory id recieved")

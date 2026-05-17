@@ -6,6 +6,8 @@ STATE_MAP = {
         SystemState.ARMED: ("ARMED"),
         SystemState.MISSION: ("MOTION"),
         SystemState.CONFIG: ("CONFIG"),
+        SystemState.SOFT_STOP: ("SOFT_STOP"),
+        SystemState.HARD_STOP: ("HARD_STOP"),
         SystemState.ERROR: ("ERROR"),
-        SystemState.EMERGENCY_HALT: ("EMERGENCY")
+        SystemState.EMERGENCY: ("EMERGENCY")
     }

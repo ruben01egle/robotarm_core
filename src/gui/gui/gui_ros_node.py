@@ -14,7 +14,7 @@ from .WriteConfigMotorClient import WriteMotorActionClient
 from .MissionClient import MissionClient
 
 from rcl_interfaces.msg import Log
-from interface.msg import TelemetryBatch, TrajectoryBatch, SystemState, MotorParameter, StopCommand
+from interface.msg import TelemetryBatch, TrajectoryBatch, SystemState, MotorParameter, HardwareCommand, HardwareActions
 from interface.srv import RequestAction
 from interface.action import Mission
 from utility.RequestActionClient import RequestActionClient
@@ -41,7 +41,7 @@ class GuiRosNode(Node):
         self.create_subscription(TelemetryBatch, 'telemetry', self.telemetry_cb, qos_profile)
         self.create_subscription(TrajectoryBatch, 'trajectory/data', self.trajectory_cb, qos_profile)
 
-        self.stop_pub = self.create_publisher(StopCommand, 'system_stop', 1)
+        self.command_pub = self.create_publisher(HardwareCommand, 'hardware/command', 1)
 
         self.read_motor_config_client = ReadMotorActionClient(self, self.read_motor_config_cb)
         self.write_motor_config_client = WriteMotorActionClient(self, self.write_motor_config_cb)
@@ -90,7 +90,7 @@ class GuiRosNode(Node):
             # Erstelle eine Liste von Dictionaries (eines pro Achse)
             # Format: [{'p':.., 'v':.., 't':..}, {...}, ...]
             target_list = []
-            for axis in [frame.axis1, frame.axis2, frame.axis3, frame.axis4, frame.axis5, frame.axis6]:
+            for axis in frame.axes:
                 target_list.append({
                     'p': math.degrees(axis.position),
                     'v': math.degrees(axis.velocity),
@@ -111,7 +111,7 @@ class GuiRosNode(Node):
             
             # Ist-Werte der 6 Achsen aufbereiten
             actual_list = []
-            for axis in [frame.axis1, frame.axis2, frame.axis3, frame.axis4, frame.axis5, frame.axis6]:
+            for axis in frame.axes:
                 actual_list.append({
                     'p': math.degrees(axis.position),
                     'v': math.degrees(axis.velocity),
@@ -203,22 +203,22 @@ class GuiRosNode(Node):
         self.write_motor_config_client.request_write_config(axis, msg)
 
     def stop_motion(self):
-        msg = StopCommand()
-        msg.stop_type = StopCommand.TYPE_SOFT_STOP
-        self.stop_pub.publish(msg)
+        msg = HardwareCommand()
+        msg.action = HardwareActions.SOFT_STOP
+        self.command_pub.publish(msg)
         self.get_logger().warn('SOFT STOP INWOKED')
         self.mission_client.cancel_current_goal()
 
     def hard_stop(self):
-        msg = StopCommand()
-        msg.stop_type = StopCommand.TYPE_HARD_STOP
-        self.stop_pub.publish(msg)
+        msg = HardwareCommand()
+        msg.action = HardwareActions.HARD_STOP
+        self.command_pub.publish(msg)
         self.get_logger().warn('HARD STOP INWOKED')
 
     def emergency_stop(self):
-        msg = StopCommand()
-        msg.stop_type = StopCommand.TYPE_EMERGENCY
-        self.stop_pub.publish(msg)
+        msg = HardwareCommand()
+        msg.action = HardwareActions.ENTER_EMERGENCY
+        self.command_pub.publish(msg)
         self.get_logger().error('EMERGENCY STOP INWOKED')
 
 def main(args=None):

@@ -10,13 +10,15 @@ from interface.srv import RequestAction
 
 class ControlCenterNode(Node):
     class State(IntEnum):
-        IDLE = SystemState.IDLE
-        CONNECTED = SystemState.CONNECTED
-        ARMED = SystemState.ARMED
-        MISSION = SystemState.MISSION
-        CONFIG = SystemState.CONFIG
-        ERROR = SystemState.ERROR
-        EMERGENCY_HALT = SystemState.EMERGENCY_HALT
+        IDLE            = SystemState.IDLE
+        CONNECTED       = SystemState.CONNECTED
+        ARMED           = SystemState.ARMED
+        MISSION         = SystemState.MISSION
+        CONFIG          = SystemState.CONFIG
+        SOFT_STOP       = SystemState.SOFT_STOP
+        HARD_STOP       = SystemState.HARD_STOP
+        ERROR           = SystemState.ERROR
+        EMERGENCY       = SystemState.EMERGENCY
 
     state: State
 
@@ -32,21 +34,33 @@ class ControlCenterNode(Node):
 
         self.HADWARE_SIGNATURE = "stm32"
 
-        self.command_id = 0
+        self.command_id = 1             # Start with 1 to prevent accidents due to standard value=0
         self.pending_command = False
 
         transitions = [
-            {'trigger': 'connect', 'source': self.State.IDLE, 'dest': self.State.CONNECTED},
-            {'trigger': 'disconnect', 'source': self.State.CONNECTED, 'dest': self.State.IDLE},
-            {'trigger': 'enter_config', 'source': self.State.CONNECTED, 'dest': self.State.CONFIG},
-            {'trigger': 'exit_config', 'source': self.State.CONFIG, 'dest': self.State.CONNECTED},
-            {'trigger': 'arm', 'source': self.State.CONNECTED, 'dest': self.State.ARMED},
-            {'trigger': 'disarm', 'source': self.State.ARMED, 'dest': self.State.CONNECTED},
-            {'trigger': 'start_mission', 'source': self.State.ARMED, 'dest': self.State.MISSION},
-            {'trigger': 'end_mission', 'source': self.State.MISSION, 'dest': self.State.ARMED},
-            {'trigger': 'error', 'source': '*', 'dest': self.State.ERROR},
-            {'trigger': 'emergency', 'source': '*', 'dest': self.State.EMERGENCY_HALT},
+            # --- Standard Workflow ---
+            {'trigger': 'connect',          'source': self.State.IDLE,      'dest': self.State.CONNECTED},
+            {'trigger': 'disconnect',       'source': self.State.CONNECTED, 'dest': self.State.IDLE},
+            {'trigger': 'enter_config',     'source': self.State.CONNECTED, 'dest': self.State.CONFIG},
+            {'trigger': 'exit_config',      'source': self.State.CONFIG,    'dest': self.State.CONNECTED},
+            {'trigger': 'arm',              'source': self.State.CONNECTED, 'dest': self.State.ARMED},
+            {'trigger': 'disarm',           'source': self.State.ARMED,     'dest': self.State.CONNECTED},
+            {'trigger': 'start_mission',    'source': self.State.ARMED,     'dest': self.State.MISSION},
+            {'trigger': 'end_mission',      'source': self.State.MISSION,   'dest': self.State.ARMED},
+
+            # --- STOPS & Recovery ---
+            {'trigger': 'soft_stop',          'source': self.State.MISSION,   'dest': self.State.SOFT_STOP},
+            {'trigger': 'soft_stop_complete', 'source': self.State.SOFT_STOP, 'dest': self.State.MISSION},
+            {'trigger': 'hard_stop',          'source': self.State.MISSION,   'dest': self.State.HARD_STOP},
+            {'trigger': 'hard_stop_complete', 'source': self.State.HARD_STOP, 'dest': self.State.ARMED},
+
+            # --- Global Error ---
+            {'trigger': 'enter_error',     'source': '*', 'dest': self.State.ERROR},
+
+            # --- Global Emergency ---
+            {'trigger': 'enter_emergency', 'source': '*', 'dest': self.State.EMERGENCY}
         ]
+        
         self.machine = Machine(model=self, states=self.State, transitions=transitions, initial=self.State.CONNECTED)
 
         self.create_subscription(Heartbeat, 'heartbeat/response', self.heartbeat_cb, 20)
@@ -138,13 +152,13 @@ class ControlCenterNode(Node):
             if not self.is_hw_connected():
                 if self.pending_command:
                     self.get_logger().error(f"HARDWARE DISCONNECTED UNEXPECTETLY")
-                    self.error() # type: ignore
+                    self.enter_error() # type: ignore
                 else:
                     self.disconnect() # type: ignore
         else:
             if not self.is_hw_connected():
                 self.get_logger().error(f"HARDWARE DISCONNECTED UNEXPECTETLY")
-                self.error() # type: ignore
+                self.enter_error() # type: ignore
 
     def request_action_cb(self, request, response):
         action_map = {
@@ -192,36 +206,46 @@ class ControlCenterNode(Node):
 
         return response
     
-    def hardware_feedback_cb(self, msg):
+    def hardware_feedback_cb(self, msg: HardwareFeedback):
         action_map = {
-            (HardwareActions.ARM): ("arm"),
-            (HardwareActions.DISARM):  ("disarm"),
-            
-            (HardwareActions.ENTER_CONFIG): ("enter_config"),
-            (HardwareActions.EXIT_CONFIG):  ("exit_config"),
-            
-            (HardwareActions.START_MISSION): ("start_mission"),
-            (HardwareActions.END_MISSION):  ("end_mission"),
-        }
-        if msg.command_id != self.command_id:
-            self.get_logger().error(f"INVALID HARDWARE FEEDBACK")
-            return
-        
-        if not msg.success:
-            self.get_logger().error(f"TRANSITION FAILED")
-            return
-        
-        trigger = action_map[msg.action]
-        try:
-            getattr(self, trigger)()
-            if self.state != msg.current_state:
-                self.get_logger().error(f"INVALID HARDWARE STATE")
-                self.error() # type: ignore
-        except Exception as e:
-            self.get_logger().error(f"Failed to switch state: {e}")
-            self.error() # type: ignore
+            # Triggers ros system
+            HardwareActions.REBOOT: "reboot",
+            HardwareActions.ARM: "arm",
+            HardwareActions.DISARM: "disarm",
+            HardwareActions.ENTER_CONFIG: "enter_config",
+            HardwareActions.EXIT_CONFIG: "exit_config",
+            HardwareActions.START_MISSION: "start_mission",
+            HardwareActions.END_MISSION: "end_mission",
 
-        self.pending_command = False
+            # Triggers SMT
+            HardwareActions.SOFT_STOP_COMPLETE: "soft_stop_complete",
+            HardwareActions.HARD_STOP_COMPLETE: "hard_stop_complete",
+
+            # Triggers common
+            HardwareActions.SOFT_STOP: "soft_stop",
+            HardwareActions.HARD_STOP: "hard_stop",
+            HardwareActions.ENTER_ERROR: "enter_error",
+            HardwareActions.ENTER_EMERGENCY: "enter_emergency",
+        }
+
+        if (msg.type == HardwareFeedback.RESPONSE):
+            if msg.command_id == self.command_id:
+                self.pending_command = False
+                if not msg.success:
+                    self.get_logger().error(f"TRANSITION FAILED")
+
+        if (msg.current_state != self.state):
+            trigger = action_map[msg.action]
+            self.get_logger().info(f"Hardware triggered: {trigger}")
+            try:
+                getattr(self, trigger)()
+                if self.state != msg.current_state:
+                    self.get_logger().error(f"INVALID HARDWARE STATE")
+                    self.enter_error() # type: ignore
+            except Exception as e:
+                self.get_logger().error(f"Failed to switch state: {e}")
+                self.enter_error() # type: ignore
+
         self.publish_state()
     
 
