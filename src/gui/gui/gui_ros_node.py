@@ -75,6 +75,10 @@ class GuiRosNode(Node):
             elif new_state == SystemState.MISSION:
                 self.store.set_status(state=new_state_str, connected=True, armed=True)
             elif new_state == SystemState.ERROR:
+                self.store.set_status(state=new_state_str, connected=True, armed=True)
+                pass
+            elif new_state == SystemState.EMERGENCY:
+                self.store.set_status(state=new_state_str, connected=True, armed=False)
                 pass
         
             self.state = new_state
@@ -208,6 +212,12 @@ class GuiRosNode(Node):
         self.command_pub.publish(msg)
         self.get_logger().warn('SOFT STOP INWOKED')
         self.mission_client.cancel_current_goal()
+
+    def soft_stop(self):
+        msg = HardwareCommand()
+        msg.action = HardwareActions.SOFT_STOP
+        self.command_pub.publish(msg)
+        self.get_logger().warn('SOFT STOP INWOKED')
 
     def hard_stop(self):
         msg = HardwareCommand()

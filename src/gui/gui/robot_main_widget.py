@@ -68,6 +68,7 @@ class RobotMainWindow(QMainWindow):
         # --- SIGNALE VERBINDEN --- 
         self.control_header.emergency_stop_pressed.connect(self.node.emergency_stop)
         self.control_header.hard_stop_pressed.connect(self.node.hard_stop)
+        self.control_header.soft_stop_pressed.connect(self.node.soft_stop)
         self.control_header.arm_toggled.connect(self.node.arm_command)
         self.config_page.request_param_read.connect(self.node.request_read_motor_config)
         self.config_page.request_param_write.connect(self.node.request_write_motor_config)

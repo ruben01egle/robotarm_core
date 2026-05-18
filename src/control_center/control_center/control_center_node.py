@@ -50,7 +50,7 @@ class ControlCenterNode(Node):
 
             # --- STOPS & Recovery ---
             {'trigger': 'soft_stop',          'source': self.State.MISSION,   'dest': self.State.SOFT_STOP},
-            {'trigger': 'soft_stop_complete', 'source': self.State.SOFT_STOP, 'dest': self.State.MISSION},
+            {'trigger': 'soft_stop_complete', 'source': self.State.SOFT_STOP, 'dest': self.State.ARMED},
             {'trigger': 'hard_stop',          'source': self.State.MISSION,   'dest': self.State.HARD_STOP},
             {'trigger': 'hard_stop_complete', 'source': self.State.HARD_STOP, 'dest': self.State.ARMED},
 

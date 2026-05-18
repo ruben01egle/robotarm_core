@@ -15,7 +15,6 @@ class GuiDataStore:
         self.connected = False
         self.armed = False
         self.state = "UNKNOWN"
-        self.current_latency = 0.0
         self.trajectory_planning_prog = 0
         self.trajectory_executing_prog = 0
         
@@ -29,7 +28,6 @@ class GuiDataStore:
             self.connected = False
             self.armed = False
             self.state = "UNKNOWN"
-            self.current_latency = 0.0
             self.trajectory_planning_prog = 0
             self.trajectory_executing_prog = 0
             self.axis_parameters = {}
@@ -44,10 +42,6 @@ class GuiDataStore:
         }
         with self._lock:
             self.frames.append(frame)
-        
-    def set_latency(self, latency):
-        with self._lock:
-            self.current_latency = latency
 
     def set_status(self, state, connected, armed):
         with self._lock:
@@ -99,7 +93,6 @@ class GuiDataStore:
                 "connected": self.connected,
                 "armed": self.armed,
                 "state": self.state,
-                "latency": self.current_latency,
             }
         
     def get_params(self):
