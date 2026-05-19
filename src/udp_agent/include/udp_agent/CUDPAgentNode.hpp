@@ -20,7 +20,7 @@
 #include "protocol/TrajectoryBatch.hpp"
 #include "protocol/TrajectoryFeedback.hpp"
 #include "protocol/TelemetryBatch.hpp"
-
+#include "protocol/Log.hpp"
 
 class CUDPAgent: public rclcpp::Node
 {
@@ -34,6 +34,7 @@ private:
     void publish(const Heartbeat& msg);
     void publish(const TrajectoryFeedback& msg);
     void publish(const TelemetryBatch& msg);
+    void publish(const Log& msg);
 
     void udpSend(const interface::msg::HardwareCommand::SharedPtr msg);
     void udpSend(const interface::msg::HeartbeatQuery::SharedPtr msg);

@@ -1,5 +1,7 @@
 #include "udp_agent/CUDPAgentNode.hpp"
 
+#include <cstring>
+
 CUDPAgent::CUDPAgent(): Node("udp_agent_node")
 {
     mUDPClient = std::make_unique<CUDPClient>(
@@ -85,6 +87,9 @@ void CUDPAgent::rawUDPDataCB(MessageType type, const uint8_t *data, uint32_t len
         case MessageType::TELEMETRY_BATCH:
             unpackAndPublish<TelemetryBatch>(data, length);
             break;
+        case MessageType::LOG:
+            unpackAndPublish<Log>(data, length);
+            break;
         default:
             RCLCPP_WARN(get_logger(), "Unknown MessageType: %d", static_cast<int>(type));
             break;
@@ -164,6 +169,27 @@ void CUDPAgent::publish(const TelemetryBatch &msg)
     }
 
     mTelemetryPub->publish(msgROS);
+}
+
+void CUDPAgent::publish(const Log &msg)
+{
+    std::string log_str(reinterpret_cast<const char*>(msg.msg), 
+                        strnlen(reinterpret_cast<const char*>(msg.msg), Log::MSG_SIZE));
+    switch (msg.type)
+    {
+    case Log::DEBUG:
+        RCLCPP_DEBUG(get_logger(), "[STM32] %s", log_str.c_str());
+        break;
+    case Log::INFO:
+        RCLCPP_INFO(get_logger(), "[STM32] %s", log_str.c_str());
+        break;
+    case Log::WARN:
+        RCLCPP_WARN(get_logger(), "[STM32] %s", log_str.c_str());
+        break;
+    case Log::ERROR:
+        RCLCPP_ERROR(get_logger(), "[STM32] %s", log_str.c_str());
+        break;
+    }
 }
 
 void CUDPAgent::udpSend(const interface::msg::HardwareCommand::SharedPtr msg)
