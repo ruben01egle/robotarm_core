@@ -51,7 +51,6 @@ class JointTile(QWidget):
         # 1. MINI MODUS
         self.mini_plot = pg.PlotWidget(title="Mini View")
         self.mini_curve = self.mini_plot.plot(pen='y') 
-        self.mini_ref_curve = self.mini_plot.plot(pen=pg.mkPen('r', style=Qt.PenStyle.DashLine))
         self.set_mini_view(self.current_view)
         
         # 2. DETAIL MODUS
@@ -65,13 +64,10 @@ class JointTile(QWidget):
         # --- WICHTIG: KURVEN INITIALISIEREN ---
         # Wir speichern die Kurven als Attribute, damit update_plots darauf zugreifen kann
         self.curve_t_act = self.p1.plot(pen='y')
-        self.curve_t_ref = self.p1.plot(pen=pg.mkPen('r', style=Qt.PenStyle.DashLine))
         
         self.curve_v_act = self.p2.plot(pen='y')
-        self.curve_v_ref = self.p2.plot(pen=pg.mkPen('r', style=Qt.PenStyle.DashLine))
         
         self.curve_p_act = self.p3.plot(pen='y')
-        self.curve_p_ref = self.p3.plot(pen=pg.mkPen('r', style=Qt.PenStyle.DashLine))
 
         for p in [self.p1, self.p2, self.p3]:
             p.setMinimumHeight(30)
@@ -107,29 +103,19 @@ class JointTile(QWidget):
             key = 'p' if self.current_view == "pos" else ('v' if self.current_view == "speed" else 't')
             
             # Zugriff: Frame -> Liste 'act' -> Index der Achse -> Wert des Keys
-            actual = [f['joint_state_act'][idx][key] for f in frames]
-            target = [f['joint_state_ref'][idx][key] for f in frames]
+            joint_state_data = [f['joint_state'][idx][key] for f in frames]
 
-            self.mini_curve.setData(times, actual)
-            self.mini_ref_curve.setData(times, target)
+            self.mini_curve.setData(times, joint_state_data)
 
         else:  # --- DETAIL MODUS ---
             # Schneller Zugriff auf alle drei Kurven gleichzeitig
             # Actuals
-            p_act = [f['joint_state_act'][idx]['p'] for f in frames]
-            v_act = [f['joint_state_act'][idx]['v'] for f in frames]
-            t_act = [f['joint_state_act'][idx]['t'] for f in frames]
-            
-            # Targets
-            p_ref = [f['joint_state_ref'][idx]['p'] for f in frames]
-            v_ref = [f['joint_state_ref'][idx]['v'] for f in frames]
-            t_ref = [f['joint_state_ref'][idx]['t'] for f in frames]
+            p_act = [f['joint_state'][idx]['p'] for f in frames]
+            v_act = [f['joint_state'][idx]['v'] for f in frames]
+            t_act = [f['joint_state'][idx]['t'] for f in frames]
 
             self.curve_p_act.setData(times, p_act)
-            self.curve_p_ref.setData(times, p_ref)
             
             self.curve_v_act.setData(times, v_act)
-            self.curve_v_ref.setData(times, v_ref)
             
             self.curve_t_act.setData(times, t_act)
-            self.curve_t_ref.setData(times, t_ref)

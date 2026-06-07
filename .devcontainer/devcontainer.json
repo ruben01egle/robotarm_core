@@ -10,7 +10,8 @@
     "runArgs": [
         "--network=host",
         "--ipc=host",
-        "--privileged"
+        "--privileged",
+        "--env=DISPLAY=${localEnv:DISPLAY}"
     ],
 
     "mounts": [

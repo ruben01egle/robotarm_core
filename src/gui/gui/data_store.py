@@ -5,22 +5,18 @@ import bisect
 class GuiDataStore:
     def __init__(self, maxlen=4000):
         self._lock = threading.Lock()
-
         self._maxlen = maxlen
         
-        # 1. Hochfrequente Daten (für die Plots)
+        # 1. Hochfrequente Telemetrie-Daten (nur noch IST-Werte für Plots & Live-Abfragen)
+        # Jeder Frame enthält: 'time' und 'joint_state_act' (Liste aus {'p':..., 'v':..., 't':...})
         self.frames = deque(maxlen=maxlen)
         
-        # 2. Aktuelle Status-Werte (für Labels/Anzeigen)
+        # 2. Aktuelle Status-Werte der ROS FSM
         self.connected = False
         self.armed = False
         self.state = "UNKNOWN"
-        self.trajectory_planning_prog = 0
-        self.trajectory_executing_prog = 0
-        
-        # 3. Konfigurations-Daten (für das Parameter-Widget)
-        self.axis_parameters = {}
 
+        # 3. Log-Nachrichten aus der ROS-Welt
         self.log_queue = deque(maxlen=50)
 
     def clear_store(self):
@@ -28,17 +24,18 @@ class GuiDataStore:
             self.connected = False
             self.armed = False
             self.state = "UNKNOWN"
-            self.trajectory_planning_prog = 0
-            self.trajectory_executing_prog = 0
-            self.axis_parameters = {}
-            self.trajectory_buffer = {}
             self.frames.clear()
+            self.log_queue.clear()
 
-    def push_telemetry_frame(self, time_s, actual_list, target_list):
+    def push_telemetry_frame(self, time_s: float, actual_list: list):
+        """
+        Wird von der ROS-Node aufgerufen.
+        actual_list ist eine Liste von Dicts für jede Achse:
+        [{'p': pos, 'v': vel, 't': torq}, ...]
+        """
         frame = {
             'time': time_s,
-            'joint_state_act': actual_list,
-            'joint_state_ref': target_list
+            'joint_state': actual_list
         }
         with self._lock:
             self.frames.append(frame)
@@ -49,23 +46,20 @@ class GuiDataStore:
             self.connected = connected
             self.armed = armed
 
-    def update_axis_config(self, params):
-        with self._lock:
-            self.axis_parameters.update(params)
-
     def add_log(self, level, name, text):
-        """Wird von der ROS-Node aufgerufen"""
+        """Wird von der ROS-Node aufgerufen, um Logs zu puffern."""
         from datetime import datetime
         ts = datetime.now().strftime("%H:%M:%S")
         self.log_queue.append(f"[{ts}] {level} [{name}]: {text}")
 
     def get_new_logs(self):
-        """Wird von der GUI aufgerufen. Holt alles ab und leert die Queue lokal."""
-        logs = list(self.log_queue)
-        self.log_queue.clear()
+        """Wird von der GUI aufgerufen. Holt Logs ab und leert die Queue."""
+        with self._lock:
+            logs = list(self.log_queue)
+            self.log_queue.clear()
         return logs
 
-    # --- Getter for GUI ---
+    # --- Getter für GUI (Plots) ---
     def get_plot_data(self, seconds=4.0):
         with self._lock:
             if not self.frames:
@@ -94,27 +88,31 @@ class GuiDataStore:
                 "armed": self.armed,
                 "state": self.state,
             }
-        
-    def get_params(self):
-        with self._lock:
-            return {
-                "params": self.axis_parameters
-            }
-        
-    def set_progress(self, planning, executing):
-        with self._lock:
-            self.trajectory_planning_prog = planning
-            self.trajectory_executing_prog = executing
-        
-    def get_progress(self):
-        with self._lock:
-            return self.trajectory_planning_prog, self.trajectory_executing_prog
     
-    def get_current_positions(self):
+    # --- Live-Getter für dein ManualControlWidget ---
+    def get_current_positions(self) -> list:
+        """Gibt die reinen aktuellen IST-Positionen aller Achsen in Grad zurück."""
+        with self._lock:
+            if not self.frames:
+                return [0.0] * 6 # Fallback, falls noch keine ROS-Daten da sind
+            
+            last_frame = self.frames[-1]
+            return [joint['p'] for joint in last_frame['joint_state']]
+
+    def get_current_velocities(self) -> list:
+        """Gibt die aktuellen IST-Geschwindigkeiten aller Achsen zurück."""
         with self._lock:
             if not self.frames:
                 return [0.0] * 6
             
             last_frame = self.frames[-1]
+            return [joint['v'] for joint in last_frame['joint_state']]
+
+    def get_current_torques(self) -> list:
+        """Gibt die aktuellen IST-Drehmomente (Effort) aller Achsen in Nm zurück."""
+        with self._lock:
+            if not self.frames:
+                return [0.0] * 6
             
-            return [joint['p'] for joint in last_frame['joint_state_act']]
+            last_frame = self.frames[-1]
+            return [joint['t'] for joint in last_frame['joint_state']]

@@ -1,182 +1,101 @@
 import sys
 import threading
+import xml.etree.ElementTree as ET
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from std_msgs.msg import Float64MultiArray
+from sensor_msgs.msg import JointState
+from rcl_interfaces.msg import Log
+from rcl_interfaces.srv import GetParameters
+
 from PyQt6.QtWidgets import QApplication
-import numpy as np
-import math
+from PyQt6.QtCore import pyqtSignal, pyqtSlot, QObject
 
 from .robot_main_widget import RobotMainWindow
 from .data_store import GuiDataStore
-from .ReadMotorConfigClient import ReadMotorActionClient
-from .WriteConfigMotorClient import WriteMotorActionClient
-from .MissionClient import MissionClient
 
-from rcl_interfaces.msg import Log
-from interface.msg import TelemetryBatch, TrajectoryBatch, SystemState, MotorParameter, HardwareCommand, HardwareActions
-from interface.srv import RequestAction
-from interface.action import Mission
 from utility.RequestActionClient import RequestActionClient
-from utility.HeartbeatClient import HeartbeatClient
-from utility.state_string_map import STATE_MAP
+from robotarm_interface.srv import RequestAction
+from robotarm_interface.msg import SystemStatus
 
-class GuiRosNode(Node):
+class GuiRosNode(Node, QObject):
+    set_manual_move = pyqtSignal(bool)
+    set_axis_limits = pyqtSignal(list)
+
     def __init__(self, data_store):
-        super().__init__('robot_gui_node')
+        Node.__init__(self, 'gui_ros_node')
+        QObject.__init__(self)
         self.store = data_store
-        self.state = SystemState.IDLE
-        self.config_requested = False
-        self.joint_target = []
-        self.trajectory_buffer = {}
 
-        qos_profile = QoSProfile(
+        telemetry_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
-            depth=50
+            depth=10
         )
 
-        self.create_subscription(SystemState, 'system_state', self.system_state_cb, 1)
+        self.create_subscription(
+            JointState, 
+            '/joint_states', 
+            self.joint_state_cb, 
+            telemetry_qos
+        )
+
+        self.create_subscription(
+            SystemStatus, 
+            '/system_status', 
+            self.system_status_cb, 
+            telemetry_qos
+        )
+
         self.create_subscription(Log, '/rosout', self.log_cb, 10)
-        self.create_subscription(TelemetryBatch, 'telemetry', self.telemetry_cb, qos_profile)
-        self.create_subscription(TrajectoryBatch, 'trajectory/data', self.trajectory_cb, qos_profile)
 
-        self.command_pub = self.create_publisher(HardwareCommand, 'hardware/command', 1)
-
-        self.read_motor_config_client = ReadMotorActionClient(self, self.read_motor_config_cb)
-        self.write_motor_config_client = WriteMotorActionClient(self, self.write_motor_config_cb)
-        self.mission_client = MissionClient(self, self.mission_feedback_cb)
+        self.forward_command_pub = self.create_publisher(
+            Float64MultiArray,
+            '/forward_position_controller/commands', 
+            1
+        )
 
         self.request_action_client = RequestActionClient(self)
-        self.heartbeat_client = HeartbeatClient(self)
 
-        state_str = STATE_MAP.get(self.state, ("UNKNOWN"))
-        self.store.set_status(state=state_str, connected=False, armed=False)
+        self.urdf_timer = self.create_timer(1.0, self.fetch_urdf_limits_startup)
 
+        self.store.set_status(state="UNKNOWN", connected=False, armed=False)
 
-    def system_state_cb(self, msg):
-        new_state = msg.state
-        new_state_str = STATE_MAP.get(new_state, ("UNKNOWN"))
-        if self.state != new_state:
-            if new_state == SystemState.IDLE:
-                self.joint_target = []
-                self.store.clear_store()
-                self.config_requested = False
-                self.store.set_status(state=new_state_str, connected=False, armed=False)
-            elif new_state == SystemState.CONNECTED:
-                if not self.config_requested:
-                    self.read_motor_config_client.request_read_config()
-                    self.config_requested = True
-                self.store.set_status(state=new_state_str, connected=True, armed=False)
-            elif new_state == SystemState.ARMED:
-                self.store.set_status(state=new_state_str, connected=True, armed=True)
-            elif new_state == SystemState.CONFIG:
-                self.store.set_status(state=new_state_str, connected=True, armed=False)
-            elif new_state == SystemState.MISSION:
-                self.store.set_status(state=new_state_str, connected=True, armed=True)
-            elif new_state == SystemState.ERROR:
-                self.store.set_status(state=new_state_str, connected=True, armed=True)
-                pass
-            elif new_state == SystemState.EMERGENCY:
-                self.store.set_status(state=new_state_str, connected=True, armed=False)
-                pass
-        
-            self.state = new_state
-
-    def trajectory_cb(self, msg):
-        t_id = msg.trajectory_id
-        if msg.trajectory_status == TrajectoryBatch.START:
-            self.get_logger().debug(f"--- GUI LOG NEW TRAJECTORY START: ID {t_id} ---")
-            self.trajectory_buffer.clear()
-        
-        for frame in msg.data:
-            key = (t_id, frame.idx)
-            # Erstelle eine Liste von Dictionaries (eines pro Achse)
-            # Format: [{'p':.., 'v':.., 't':..}, {...}, ...]
-            target_list = []
-            for axis in frame.axes:
-                target_list.append({
-                    'p': math.degrees(axis.position),
-                    'v': math.degrees(axis.velocity),
-                    't': axis.torque
-                })
-                
-            self.trajectory_buffer[key] = target_list
-
-        if msg.trajectory_status == TrajectoryBatch.END:
-            self.get_logger().debug(f"--- GUI LOG TRAJECTORY DATA END: ID {t_id} ---")
-
-    def telemetry_cb(self, msg):
-        t_id = msg.trajectory_id
-        
-        for frame in msg.data:
-            key = (t_id, frame.idx)
-            time_s = frame.time_us / 1_000_000.0 # Umrechnung in Sekunden
+    def joint_state_cb(self, msg: JointState):
+        try:
+            time_s = msg.header.stamp.sec + (msg.header.stamp.nanosec * 1e-9)
             
-            # Ist-Werte der 6 Achsen aufbereiten
-            actual_list = []
-            for axis in frame.axes:
-                actual_list.append({
-                    'p': math.degrees(axis.position),
-                    'v': math.degrees(axis.velocity),
-                    't': axis.torque
-                })
-
-            if key in self.trajectory_buffer:
-                self.joint_target = self.trajectory_buffer.pop(key)
-            elif not self.joint_target:
-                self.joint_target = actual_list
+            num_joints = len(msg.position)
+            
+            joint_state_list = []
+            for i in range(num_joints):
+                v_val = msg.velocity[i] if i < len(msg.velocity) else 0.0
+                t_val = msg.effort[i] if i < len(msg.effort) else 0.0
                 
-            if len(actual_list) == 6 and len(self.joint_target) == 6:
-                self.store.push_telemetry_frame(time_s, actual_list, self.joint_target)
-            else:
-                self.get_logger().warn(f"Rejection: Act={len(actual_list)}, Ref={len(self.joint_target)}")
+                joint_state_list.append({
+                    'p': msg.position[i],
+                    'v': v_val,
+                    't': t_val
+                })
+            
+            self.store.push_telemetry_frame(time_s, joint_state_list)
+            
+        except Exception as e:
+            self.get_logger().error(f"Error while parsing joint states: {e}", throttle_duration_sec=2.0)
 
     def log_cb(self, msg):
         levels = {20: "INFO", 30: "WARN", 40: "ERROR", 50: "FATAL"}
         level_str = levels.get(msg.level, "DEBUG")
         self.store.add_log(level_str, msg.name, msg.msg)
 
-
-    def read_motor_config_cb(self, params, success):
-        if not success:
-            self.config_requested = False
-            self.get_logger().error("Read motor config failed")
-            return
-
-        new_parameters = {}
-        
-        for index, p in enumerate(params):
-            axis_id = index + 1  # Index 0 wird Achse 1, Index 1 wird Achse 2, etc.
-            
-            new_parameters[axis_id] = {
-                "p_gain": p.p_gain,
-                "i_gain": p.i_gain,
-                "d_gain": p.d_gain,
-                "limit_v": p.limit_v
-            }
-        self.store.update_axis_config(new_parameters)
-
-    def write_motor_config_cb(self, axis_id, params, success):
-        if not success:
-            self.get_logger().error("Read motor config failed")
-            return
-
-        new_parameters = {
-            axis_id: {
-                "p_gain": params.p_gain,
-                "i_gain": params.i_gain,
-                "d_gain": params.d_gain,
-                "limit_v": params.limit_v
-            }
-        }
-        self.store.update_axis_config(new_parameters)
-
-    def mission_feedback_cb(self, feedback_msg):
-        self.store.set_progress(feedback_msg.feedback.planning_progress, feedback_msg.feedback.execution_progress)
+    def system_status_cb(self, msg: SystemStatus):
+        self.store.set_status(msg.state, msg.connected, msg.armed)
 
     # functions for gui to attach signals to
-    def arm_command(self, arm):
+    @pyqtSlot(bool)
+    def arm_command(self, arm: bool):
         if arm:
             self.get_logger().info('Arm robot requested')
             self.request_action_client.send_request(RequestAction.Request.ACTION_ARM_ROBOT, RequestAction.Request.TYPE_START, False)
@@ -184,52 +103,104 @@ class GuiRosNode(Node):
             self.get_logger().info('Disarm robot requested')
             self.request_action_client.send_request(RequestAction.Request.ACTION_ARM_ROBOT, RequestAction.Request.TYPE_STOP, False)
 
-    def start_motion_jointangles(self, angles, scale):
-        self.store.set_progress(0, 0)
-        self.get_logger().info('Start joint angle mission')
-        joint_angle_rad = np.deg2rad(angles).astype(np.float32)
-        self.mission_client.request_mission(Mission.Goal.OPTION_SET_JOINT_ANGLES, None, joint_angle_rad, scale)
+    @pyqtSlot(bool)
+    def req_manual_move(self, move: bool):
+        controller_name = "forward_position_controller"
+        if move:
+            self.get_logger().info('Manual move requested')
+            if self.request_action_client.send_request(RequestAction.Request.ACTION_MISSION, RequestAction.Request.TYPE_START, blocking=True, controller_names=controller_name):
+                self.set_manual_move.emit(True)
+        else:
+            self.get_logger().info('Manual move stop requested')
+            if self.request_action_client.send_request(RequestAction.Request.ACTION_MISSION, RequestAction.Request.TYPE_STOP, blocking=True, controller_names=controller_name):
+                self.set_manual_move.emit(False)
 
-    def start_motion_csv(self, path):
-        self.store.set_progress(0, 0)
-        self.get_logger().info('Start csv mission')
-        self.mission_client.request_mission(Mission.Goal.OPTION_CSV, path, None, None)
+        
 
-    def request_read_motor_config(self):
-        self.read_motor_config_client.request_read_config()
+    @pyqtSlot(list)
+    def stream_move(self, target: list):
+        try:
+            msg = Float64MultiArray()
+            msg.data = target
+            self.forward_command_pub.publish(msg)
+            
+        except Exception as e:
+            self.get_logger().error(f"Error while streaming manual move targets: {e}")
 
-    def request_write_motor_config(self, axis, params):
-        msg = MotorParameter()
-        msg.p_gain = int(params.get("p_gain", 0))
-        msg.d_gain = int(params.get("d_gain", 0))
-        msg.i_gain = int(params.get("i_gain", 0))
-        msg.limit_v = int(params.get("limit_v", 0))
-        self.write_motor_config_client.request_write_config(axis, msg)
+    @pyqtSlot()
+    def stop(self):
+        self.get_logger().warn('STOP INWOKED')
 
-    def stop_motion(self):
-        msg = HardwareCommand()
-        msg.action = HardwareActions.SOFT_STOP
-        self.command_pub.publish(msg)
-        self.get_logger().warn('SOFT STOP INWOKED')
-        self.mission_client.cancel_current_goal()
-
-    def soft_stop(self):
-        msg = HardwareCommand()
-        msg.action = HardwareActions.SOFT_STOP
-        self.command_pub.publish(msg)
-        self.get_logger().warn('SOFT STOP INWOKED')
-
-    def hard_stop(self):
-        msg = HardwareCommand()
-        msg.action = HardwareActions.HARD_STOP
-        self.command_pub.publish(msg)
-        self.get_logger().warn('HARD STOP INWOKED')
-
-    def emergency_stop(self):
-        msg = HardwareCommand()
-        msg.action = HardwareActions.ENTER_EMERGENCY
-        self.command_pub.publish(msg)
+    @pyqtSlot()
+    def emergency(self):
         self.get_logger().error('EMERGENCY STOP INWOKED')
+
+    def fetch_urdf_limits_startup(self):
+        """Versucht beim Startup die URDF zu laden. Stoppt sich selbst bei Erfolg."""
+        # Service-Client für die Parameter des robot_state_publisher erstellen
+        param_client = self.create_client(GetParameters, '/robot_state_publisher/get_parameters')
+        
+        if not param_client.service_is_ready():
+            self.get_logger().info("Warte auf '/robot_state_publisher' um URDF-Limits zu lesen...")
+            return
+
+        # Wenn der Service da ist, Timer stoppen, damit wir das nur EINMAL machen
+        self.urdf_timer.cancel()
+
+        # Parameter abfragen
+        req = GetParameters.Request()
+        req.names = ['robot_description']
+        
+        future = param_client.call_async(req)
+        # Wir hängen einen Callback an das Future, sobald die Antwort da ist
+        future.add_done_callback(self.urdf_response_cb)
+
+    def urdf_response_cb(self, future):
+        try:
+            response = future.result()
+            if not response or not response.values:
+                self.get_logger().error("URDF-Parameter 'robot_description' ist leer!")
+                return
+
+            # Den XML-String aus dem ROS-Parameter extrahieren
+            urdf_string = response.values[0].string_value
+            
+            # URDF parsen
+            limits = self.parse_urdf_limits(urdf_string)
+            
+            if limits:
+                self.get_logger().info(f"URDF parsed succesfully: {len(limits)} axis found!")
+                # --- HIER FEUERT DAS SIGNAL ---
+                # Qt reicht diese Liste jetzt an dein ManualControl und TelemetryDashboard weiter
+                self.set_axis_limits.emit(limits)
+            else:
+                self.get_logger().warn("No axis found")
+
+        except Exception as e:
+            self.get_logger().error(f"Error parsing URDF: {e}")
+
+    def parse_urdf_limits(self, urdf_xml_str: str) -> list:
+        """Parst den URDF-String und gibt eine Liste von (min, max) in RADIAN zurück."""
+        limits_list = []
+        try:
+            root = ET.fromstring(urdf_xml_str)
+            
+            # Wir suchen nach allen 'joint'-Elementen
+            for joint in root.findall('joint'):
+                joint_type = joint.get('type')
+                
+                # Nur Gelenke, die Limits besitzen (revolute = rotierend, prismatic = linear)
+                if joint_type in ['revolute', 'prismatic']:
+                    limit_element = joint.find('limit')
+                    if limit_element is not None:
+                        lower = float(limit_element.get('lower', 0.0))
+                        upper = float(limit_element.get('upper', 0.0))
+                        limits_list.append((lower, upper))
+                        
+            return limits_list
+        except Exception as e:
+            self.get_logger().error(f"Error parsing URDF: {e}")
+            return []
 
 def main(args=None):
     # 1. ROS initialisieren

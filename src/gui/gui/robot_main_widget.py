@@ -6,8 +6,6 @@ import os
 
 # Deine Widgets importieren
 from .telemetry_widget import TelemetryDashboard
-from .motues_config_widget import RobotParameterConfig 
-from .trajectory_widget import TrajectoryControlWidget 
 from .manual_control_widget import ManualControlWidget 
 from .control_header_widget import ControlHeader
 
@@ -39,13 +37,9 @@ class RobotMainWindow(QMainWindow):
         self.control_stack = QStackedWidget()
         self.control_stack.setFixedWidth(400) 
         
-        self.traj_page = TrajectoryControlWidget(self.data_store)
         self.manual_page = ManualControlWidget(self.data_store)
-        self.config_page = RobotParameterConfig(self.data_store)
         
-        self.control_stack.addWidget(self.traj_page)    # Index 0
-        self.control_stack.addWidget(self.manual_page)  # Index 1
-        self.control_stack.addWidget(self.config_page)  # Index 2
+        self.control_stack.addWidget(self.manual_page)
 
         self.left_column_layout.addWidget(self.nav_container) 
         self.left_column_layout.addWidget(self.control_stack)
@@ -66,16 +60,16 @@ class RobotMainWindow(QMainWindow):
         self.resize(1400, 1000)
 
         # --- SIGNALE VERBINDEN --- 
-        self.control_header.emergency_stop_pressed.connect(self.node.emergency_stop)
-        self.control_header.hard_stop_pressed.connect(self.node.hard_stop)
-        self.control_header.soft_stop_pressed.connect(self.node.soft_stop)
+        self.control_header.emergency_pressed.connect(self.node.emergency)
+        self.control_header.stop_pressed.connect(self.node.stop)
         self.control_header.arm_toggled.connect(self.node.arm_command)
-        self.config_page.request_param_read.connect(self.node.request_read_motor_config)
-        self.config_page.request_param_write.connect(self.node.request_write_motor_config)
-        self.manual_page.request_move.connect(self.node.start_motion_jointangles)
-        self.traj_page.start_trajectory.connect(self.node.start_motion_csv)
-        self.traj_page.stop_trajectory.connect(self.node.stop_motion)
-
+        self.manual_page.request_movement.connect(self.node.req_manual_move)
+        self.manual_page.live_stream_move.connect(self.node.stream_move)
+        # --- SLOTS VERBINDEN ---
+        self.node.set_manual_move.connect(self.manual_page.set_movement_allowed)
+        self.node.set_axis_limits.connect(self.manual_page.set_axis_limits)
+        self.node.set_axis_limits.connect(self.dashboard.set_axis_limits)
+    
         # Timer (ca. 30 FPS für flüssige Plots)
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.global_update)
@@ -88,11 +82,9 @@ class RobotMainWindow(QMainWindow):
         self.nav_container = QWidget()
         self.nav_layout = QVBoxLayout(self.nav_container)
         
-        self.btn_traj = QPushButton("TRAJECTORY")
         self.btn_manual = QPushButton("MANUAL")
-        self.btn_config = QPushButton("CONFIG")
         
-        for btn, idx in [(self.btn_traj, 0), (self.btn_manual, 1), (self.btn_config, 2)]:
+        for btn, idx in [(self.btn_manual, 1)]:
             btn.setCheckable(True)
             btn.setAutoExclusive(True)
             btn.setMinimumHeight(40)
@@ -108,7 +100,7 @@ class RobotMainWindow(QMainWindow):
             # Lambda nutzt hier den Default-Parameter i=idx, um den Scope zu fixieren
             btn.clicked.connect(lambda checked, i=idx: self.switch_gui_mode(i))
             self.nav_layout.addWidget(btn)
-        self.btn_traj.setChecked(True)
+        self.btn_manual.setChecked(True)
         self.main_layout.addWidget(self.nav_container)
 
     def init_log_console(self):
@@ -137,8 +129,6 @@ class RobotMainWindow(QMainWindow):
         self.dashboard.update_all()
         self.manual_page.update_widget()
         self.control_header.update_status()
-        self.config_page.update_widget()
-        self.traj_page.update_widget()
         self.log_update()
 
     def log_update(self):

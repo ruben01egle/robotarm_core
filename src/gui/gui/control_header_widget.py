@@ -6,9 +6,8 @@ class ControlHeader(QWidget):
     Zentrale Kontrollleiste für den Roboter (oben platziert).
     Vereint Monitoring (Status) und kritische Kommandos (Arm, Stop).
     """
-    emergency_stop_pressed = pyqtSignal()
-    hard_stop_pressed = pyqtSignal()
-    soft_stop_pressed = pyqtSignal()
+    emergency_pressed = pyqtSignal()
+    stop_pressed = pyqtSignal()
     arm_toggled = pyqtSignal(bool)
 
     def __init__(self, store):
@@ -64,23 +63,10 @@ class ControlHeader(QWidget):
         """)
         self.btn_arm.clicked.connect(self.handle_arm_click)
 
-        # Soft Stop (Mattes Gelb/Orange - Kontrolliertes Bremsen)
-        self.btn_soft_stop = QPushButton("SOFT STOP")
-        self.btn_soft_stop.setFixedHeight(42)
-        self.btn_soft_stop.setStyleSheet("""
-            QPushButton { 
-                background-color: #d4ac0d; color: white; font-weight: bold; 
-                padding: 0 22px; border-radius: 4px; font-size: 13px;
-            }
-            QPushButton:hover { background-color: #f1c40f; }
-            QPushButton:pressed { background-color: #b7950b; }
-        """)
-        self.btn_soft_stop.clicked.connect(self.soft_stop_pressed.emit)
-
         # Hard Stop (Kräftiges Orange/Hellrot - Sofortiger Achsstopp)
-        self.btn_hard_stop = QPushButton("HARD STOP")
-        self.btn_hard_stop.setFixedHeight(42)
-        self.btn_hard_stop.setStyleSheet("""
+        self.btn_stop = QPushButton("STOP")
+        self.btn_stop.setFixedHeight(42)
+        self.btn_stop.setStyleSheet("""
             QPushButton { 
                 background-color: #e65100; color: white; font-weight: bold; 
                 padding: 0 22px; border-radius: 4px; font-size: 13px;
@@ -88,10 +74,10 @@ class ControlHeader(QWidget):
             QPushButton:hover { background-color: #f39c12; }
             QPushButton:pressed { background-color: #d35400; }
         """)
-        self.btn_hard_stop.clicked.connect(self.hard_stop_pressed.emit)
+        self.btn_stop.clicked.connect(self.stop_pressed.emit)
 
         # Emergency Stop (Dominantes Signalrot mit hellem Kontrastrahmen - Strom weg)
-        self.btn_emergency = QPushButton("EMERGENCY STOP")
+        self.btn_emergency = QPushButton("EMERGENCY")
         self.btn_emergency.setFixedHeight(42)
         self.btn_emergency.setStyleSheet("""
             QPushButton { 
@@ -101,15 +87,14 @@ class ControlHeader(QWidget):
             QPushButton:hover { background-color: #e74c3c; border-color: white; }
             QPushButton:pressed { background-color: #962d22; }
         """)
-        self.btn_emergency.clicked.connect(self.emergency_stop_pressed.emit)
+        self.btn_emergency.clicked.connect(self.emergency_pressed.emit)
 
         # Zusammenbau
         layout.addWidget(self.conn_label)
         layout.addWidget(self.state_label)
         layout.addStretch()
         layout.addWidget(self.btn_arm)
-        layout.addWidget(self.btn_soft_stop)
-        layout.addWidget(self.btn_hard_stop)
+        layout.addWidget(self.btn_stop)
         layout.addWidget(self.btn_emergency)
 
     def handle_arm_click(self):

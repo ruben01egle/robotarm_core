@@ -8,7 +8,16 @@ RUN apt-get update && apt-get install -y \
     libxcb-icccm4 \
     libxcb-keysyms1 \
     libxcb-shape0 \
-    ros-jazzy-rmw-cyclonedds-cpp \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get install -y \
+    ros-${ROS_DISTRO}-rmw-cyclonedds-cpp \
+    ros-${ROS_DISTRO}-rviz2 \
+    ros-${ROS_DISTRO}-rviz-common \
+    ros-${ROS_DISTRO}-rviz-default-plugins \
+    ros-${ROS_DISTRO}-xacro \
+    ros-${ROS_DISTRO}-controller-manager-msgs \
+    ros-${ROS_DISTRO}-ros2-control \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PIP_BREAK_SYSTEM_PACKAGES=1

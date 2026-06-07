@@ -1,8 +1,20 @@
+import os
+from ament_index_python.packages import get_package_share_directory
+
 from launch import LaunchDescription
+from launch.actions import IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 
 def generate_launch_description():
-    extra_args = ['--log-level', 'rmw_cyclonedds_cpp:=ERROR']
+
+    description_share = get_package_share_directory('robotarm_description')
+
+    include_rviz = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(description_share, 'launch', 'rviz.launch.py')
+        )
+    )
 
     return LaunchDescription([
         
@@ -11,38 +23,17 @@ def generate_launch_description():
             executable='control_center_node',
             name='control_center',
             output='screen',
-            ros_arguments=extra_args
+            parameters=[{
+                'hardware_component_name': 'MoteusHardwareSystem'
+            }]
         ),
         
         Node(
             package='gui',
             executable='gui_ros_node',
             name='gui_node',
-            output='screen',
-            ros_arguments=extra_args
+            output='screen'
         ),
 
-        Node(
-            package='mission_controller',
-            executable='mission_controller_node',
-            name='mission_controller_node',
-            output='screen',
-            ros_arguments=extra_args
-        ),
-
-        Node(
-            package='planner',
-            executable='p2p_jointspace_node',
-            name='p2p_jointspace_node',
-            output='screen',
-            ros_arguments=extra_args
-        ),
-
-        Node(
-            package='udp_agent',
-            executable='udp_agent_node',
-            name='udp_agent_node',
-            output='screen',
-            ros_arguments=extra_args
-        ),
+        include_rviz
     ])
