@@ -37,7 +37,7 @@ class RobotMainWindow(QMainWindow):
         self.control_stack = QStackedWidget()
         self.control_stack.setFixedWidth(400) 
         
-        self.manual_page = ManualControlWidget(self.data_store)
+        self.manual_page = ManualControlWidget(self.data_store, update_rate=30)
         
         self.control_stack.addWidget(self.manual_page)
 

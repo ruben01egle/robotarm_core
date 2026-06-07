@@ -7,17 +7,18 @@ class ManualControlWidget(QWidget):
     live_stream_move = pyqtSignal(list)
     request_movement = pyqtSignal(bool)
 
-    def __init__(self, store, parent=None):
+    def __init__(self, store, update_rate=30, parent=None):
         super().__init__(parent)
         self.store = store
         
         # Interner Zustand
+        self.update_rate = update_rate
+        self.velocity_limits = []
         self.limits = []
         self.num_joints = 0
         self.movement_enabled = False
         
-        # Sicherheits-Feature: Maximaler Sprung pro Update-Zyklus in Grad (z.B. max 5.0° pro Aufruf)
-        self.max_allowed_delta = 5.0 
+        self.speed_scale = 0.5
         
         # Listen für dynamische UI-Elemente
         self.sliders = []
@@ -35,18 +36,30 @@ class ManualControlWidget(QWidget):
         self.main_layout.addWidget(self.placeholder_label)
 
     @pyqtSlot(list)
-    def set_axis_limits(self, new_limits_rad: list):
+    def set_axis_limits(self, axis_data: list):
         """
-        Wird beim Startup von außen aufgerufen. 
-        Erwartet eine Liste von Tuples: [(min, max), (min, max), ...] in Grad.
-        Baut die GUI komplett dynamisch auf.
+        Erwartet Liste von Tuples: [(min, max, v_max_rad_s), ...]
+        v_max_rad_s: Maximale Geschwindigkeit in Radiant pro Sekunde.
         """
-        if not new_limits_rad:
+        if not axis_data:
             return
             
-        self.limits = [(math.degrees(m_min), math.degrees(m_max)) for m_min, m_max in new_limits_rad]
-        self.num_joints = len(new_limits_rad)
+        self.num_joints = len(axis_data)
+        self.limits = []
+        self.velocity_limits = []
         self.last_sent_positions = [0.0] * self.num_joints
+
+        for min_rad, max_rad, v_max_rad_s in axis_data:
+            # 1. Positionslimits für die Slider (in Grad)
+            min_deg = math.degrees(min_rad)
+            max_deg = math.degrees(max_rad)
+            self.limits.append((min_deg, max_deg))
+            
+            # 2. Delta berechnen: v_max (in Grad/s) / Frequenz (Hz) = Grad pro Frame
+            v_max_deg_s = math.degrees(v_max_rad_s)
+            # Sicherheitsfaktor 0.9, damit wir knapp unter dem Limit bleiben
+            max_delta_per_frame = (v_max_deg_s / self.update_rate) * 0.95
+            self.velocity_limits.append(max_delta_per_frame)
 
         # Platzhalter entfernen
         self.main_layout.removeWidget(self.placeholder_label)
@@ -147,7 +160,8 @@ class ManualControlWidget(QWidget):
         self.main_layout.addWidget(speed_container)
 
     def on_speed_slider_changed(self, val):
-        pass
+        self.speed_scale = val/100
+        self.speed_display.setText(f"{val}%")
 
     def on_lock_toggle_clicked(self, checked):
         """Wird aufgerufen, wenn der Benutzer manuell auf den Freischalt-Button klickt."""
@@ -217,37 +231,26 @@ class ManualControlWidget(QWidget):
             self.process_and_stream_sliders()
 
     def process_and_stream_sliders(self):
-        """
-        Wir nehmen die Slider-Positionen nur als 'Ziel' (Target).
-        Wir senden aber nur ein Delta in Richtung dieses Ziels.
-        """
-        # 1. Slider-Werte als 'Wunsch-Positionen' lesen
-        target_slider_positions = [s.value() / 100.0 for s in self.sliders]
-        
-        # 2. Wir berechnen für diesen Zyklus die nächste logische Position für den Roboter
-        # ausgehend von der letzten gesendeten Position.
+        target_positions = [s.value() / 100.0 for s in self.sliders]
         new_sent_positions = []
         
         for i in range(self.num_joints):
-            diff = target_slider_positions[i] - self.last_sent_positions[i]
+            diff = target_positions[i] - self.last_sent_positions[i]
             
-            # Begrenze die Bewegung pro Zyklus auf das Maximum
-            if abs(diff) > self.max_allowed_delta:
-                step = math.copysign(self.max_allowed_delta, diff)
+            # Dynamisches Limit pro Achse nutzen
+            limit = self.velocity_limits[i] * self.speed_scale
+            
+            if abs(diff) > limit:
+                # Sanfte Annäherung
+                step = math.copysign(limit, diff)
                 new_pos = self.last_sent_positions[i] + step
             else:
-                new_pos = target_slider_positions[i]
+                new_pos = target_positions[i]
                 
             new_sent_positions.append(new_pos)
-            
-            # WICHTIG: Update das Label (aber NICHT den Slider!)
             self.target_labels[i].setText(f"SET: {new_pos:.2f}°")
 
-        # 3. Senden
-        positions_in_radians = [math.radians(deg) for deg in new_sent_positions]
-        self.live_stream_move.emit(positions_in_radians)
-        
-        # 4. Status merken
+        self.live_stream_move.emit([math.radians(deg) for deg in new_sent_positions])
         self.last_sent_positions = new_sent_positions
 
     def sync_sliders_to_actual(self):
@@ -260,7 +263,3 @@ class ManualControlWidget(QWidget):
                     self.target_labels[i].setText(f"SET: {val:.2f}°")
                     self.sliders[i].blockSignals(False)
             self.last_sent_positions = list(self.current_actual_values)
-
-    def set_max_delta(self, max_degree: float):
-        """Erlaubt das Ändern der Delta-Sicherheitsgrenze zur Laufzeit."""
-        self.max_allowed_delta = max_degree

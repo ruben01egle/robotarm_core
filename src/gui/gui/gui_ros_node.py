@@ -195,7 +195,8 @@ class GuiRosNode(Node, QObject):
                     if limit_element is not None:
                         lower = float(limit_element.get('lower', 0.0))
                         upper = float(limit_element.get('upper', 0.0))
-                        limits_list.append((lower, upper))
+                        velocity = float(limit_element.get('velocity', 1.0))
+                        limits_list.append((lower, upper, velocity))
                         
             return limits_list
         except Exception as e:
