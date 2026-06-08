@@ -61,7 +61,7 @@ class RobotMainWindow(QMainWindow):
 
         # --- SIGNALE VERBINDEN --- 
         self.control_header.emergency_pressed.connect(self.node.emergency)
-        self.control_header.stop_pressed.connect(self.node.stop)
+        self.control_header.stop_toggled.connect(self.node.stop)
         self.control_header.arm_toggled.connect(self.node.arm_command)
         self.manual_page.request_movement.connect(self.node.req_manual_move)
         self.manual_page.live_stream_move.connect(self.node.stream_move)

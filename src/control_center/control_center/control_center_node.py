@@ -311,6 +311,12 @@ class ControlCenterNode(Node):
             
             (RequestAction.Request.ACTION_MISSION,   RequestAction.Request.TYPE_START): "enter_mission",
             (RequestAction.Request.ACTION_MISSION,   RequestAction.Request.TYPE_STOP):  "exit_mission",
+
+            (RequestAction.Request.INVOKE_STOP,      RequestAction.Request.TYPE_START): "enter_stop",
+            (RequestAction.Request.INVOKE_STOP,      RequestAction.Request.TYPE_STOP):  "exit_stop",
+
+            (RequestAction.Request.INVOKE_EMERGENCY, RequestAction.Request.TYPE_START): "enter_emergency",
+            (RequestAction.Request.INVOKE_EMERGENCY, RequestAction.Request.TYPE_STOP):  "enter_emergency"
         }
 
         key = (request.action_id, request.request_type)
@@ -345,6 +351,7 @@ class ControlCenterNode(Node):
             
             msg.connected = self.state != SystemState.IDLE and self.state != SystemState.ERROR
             msg.armed = self.state in [SystemState.ARMED, SystemState.MISSION]
+            msg.stopped = self.state in [SystemState.STOP]
             
             # msg.active_controller = self.active_controller if self.active_controller else ""
             # msg.active_node = self.active_node if self.active_node else ""

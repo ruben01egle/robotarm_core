@@ -7,7 +7,7 @@ class ControlHeader(QWidget):
     Vereint Monitoring (Status) und kritische Kommandos (Arm, Stop).
     """
     emergency_pressed = pyqtSignal()
-    stop_pressed = pyqtSignal()
+    stop_toggled = pyqtSignal(bool)
     arm_toggled = pyqtSignal(bool)
 
     def __init__(self, store):
@@ -63,20 +63,19 @@ class ControlHeader(QWidget):
         """)
         self.btn_arm.clicked.connect(self.handle_arm_click)
 
-        # Hard Stop (Kräftiges Orange/Hellrot - Sofortiger Achsstopp)
+        # Stop (Kräftiges Orange/Hellrot - Sofortiger Achsstopp)
         self.btn_stop = QPushButton("STOP")
+        self.btn_stop.setCheckable(True)
         self.btn_stop.setFixedHeight(42)
         self.btn_stop.setStyleSheet("""
             QPushButton { 
-                background-color: #e65100; color: white; font-weight: bold; 
-                padding: 0 22px; border-radius: 4px; font-size: 13px;
-            }
+                QPushButton { background-color: #e65100; color: white; font-weight: bold; border-radius: 4px; font-size: 13px; }
             QPushButton:hover { background-color: #f39c12; }
-            QPushButton:pressed { background-color: #d35400; }
+            QPushButton:checked { background-color: #7f8c8d; border: 2px solid #bdc3c7; }
         """)
-        self.btn_stop.clicked.connect(self.stop_pressed.emit)
+        self.btn_stop.clicked.connect(self.handle_stop_click)
 
-        # Emergency Stop (Dominantes Signalrot mit hellem Kontrastrahmen - Strom weg)
+        # Emergency (Dominantes Signalrot mit hellem Kontrastrahmen - Strom weg)
         self.btn_emergency = QPushButton("EMERGENCY")
         self.btn_emergency.setFixedHeight(42)
         self.btn_emergency.setStyleSheet("""
@@ -101,12 +100,17 @@ class ControlHeader(QWidget):
         is_checked = self.btn_arm.isChecked()
         self.arm_toggled.emit(is_checked)
 
+    def handle_stop_click(self):
+        is_checked = self.btn_stop.isChecked()
+        self.stop_toggled.emit(is_checked)
+
     def update_status(self):
         """Zentrale Update-Logik für den Header."""
         status = self.store.get_status()
         connected = status["connected"]
         state = status["state"]
         armed = status["armed"]
+        stoped = status["stopped"]
         
         # Verbindung
         color = "#2ecc71" if connected else "#e74c3c"
@@ -124,3 +128,11 @@ class ControlHeader(QWidget):
             self.btn_arm.blockSignals(False)
         
         self.btn_arm.setText("DISARM" if armed else "ARM ROBOT")
+
+        # Arm-Button Sync
+        if stoped != self.btn_stop.isChecked():
+            self.btn_stop.blockSignals(True)
+            self.btn_stop.setChecked(armed)
+            self.btn_stop.blockSignals(False)
+        
+        self.btn_stop.setText("RESUME" if stoped else "STOP")

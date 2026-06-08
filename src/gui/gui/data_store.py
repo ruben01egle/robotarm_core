@@ -15,6 +15,7 @@ class GuiDataStore:
         self.connected = False
         self.armed = False
         self.state = "UNKNOWN"
+        self.stopped = False
 
         # 3. Log-Nachrichten aus der ROS-Welt
         self.log_queue = deque(maxlen=50)
@@ -24,6 +25,7 @@ class GuiDataStore:
             self.connected = False
             self.armed = False
             self.state = "UNKNOWN"
+            self.stopped = False
             self.frames.clear()
             self.log_queue.clear()
 
@@ -40,11 +42,12 @@ class GuiDataStore:
         with self._lock:
             self.frames.append(frame)
 
-    def set_status(self, state, connected, armed):
+    def set_status(self, state, connected, armed, stopped):
         with self._lock:
             self.state = state
             self.connected = connected
             self.armed = armed
+            self.stopped = stopped
 
     def add_log(self, level, name, text):
         """Wird von der ROS-Node aufgerufen, um Logs zu puffern."""
@@ -87,6 +90,7 @@ class GuiDataStore:
                 "connected": self.connected,
                 "armed": self.armed,
                 "state": self.state,
+                "stopped": self.stopped
             }
     
     # --- Live-Getter für dein ManualControlWidget ---

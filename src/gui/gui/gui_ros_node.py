@@ -61,7 +61,7 @@ class GuiRosNode(Node, QObject):
 
         self.urdf_timer = self.create_timer(1.0, self.fetch_urdf_limits_startup)
 
-        self.store.set_status(state="UNKNOWN", connected=False, armed=False)
+        self.store.set_status(state="UNKNOWN", connected=False, armed=False, stopped=False)
 
     def joint_state_cb(self, msg: JointState):
         try:
@@ -91,7 +91,7 @@ class GuiRosNode(Node, QObject):
         self.store.add_log(level_str, msg.name, msg.msg)
 
     def system_status_cb(self, msg: SystemStatus):
-        self.store.set_status(msg.state, msg.connected, msg.armed)
+        self.store.set_status(msg.state, msg.connected, msg.armed, msg.stopped)
 
     # functions for gui to attach signals to
     @pyqtSlot(bool)
@@ -115,8 +115,6 @@ class GuiRosNode(Node, QObject):
             if self.request_action_client.send_request(RequestAction.Request.ACTION_MISSION, RequestAction.Request.TYPE_STOP, blocking=True, controller_names=controller_name):
                 self.set_manual_move.emit(False)
 
-        
-
     @pyqtSlot(list)
     def stream_move(self, target: list):
         try:
@@ -127,13 +125,19 @@ class GuiRosNode(Node, QObject):
         except Exception as e:
             self.get_logger().error(f"Error while streaming manual move targets: {e}")
 
-    @pyqtSlot()
-    def stop(self):
-        self.get_logger().warn('STOP INWOKED')
+    @pyqtSlot(bool)
+    def stop(self, stop: bool):
+        if stop:
+            self.get_logger().info('Stop robot requested')
+            self.request_action_client.send_request(RequestAction.Request.INVOKE_STOP, RequestAction.Request.TYPE_START, False)
+        else:
+            self.get_logger().info('Release robot requested')
+            self.request_action_client.send_request(RequestAction.Request.INVOKE_STOP, RequestAction.Request.TYPE_STOP, False)
 
     @pyqtSlot()
     def emergency(self):
         self.get_logger().error('EMERGENCY STOP INWOKED')
+        self.request_action_client.send_request(RequestAction.Request.INVOKE_EMERGENCY, RequestAction.Request.TYPE_START, False)
 
     def fetch_urdf_limits_startup(self):
         """Versucht beim Startup die URDF zu laden. Stoppt sich selbst bei Erfolg."""

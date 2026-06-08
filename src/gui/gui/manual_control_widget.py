@@ -221,8 +221,8 @@ class ManualControlWidget(QWidget):
         actual_positions_rad = self.store.get_current_positions() 
         
         # DIREKTE KONVERTIERUNG: Für die Anzeige im Widget rechnen wir Radian in Grad um
-        self.current_actual_values = [math.degrees(rad) for rad in actual_positions_rad]
-        for i, val in enumerate(self.current_actual_values):
+        self.current_values_deg = [math.degrees(rad) for rad in actual_positions_rad]
+        for i, val in enumerate(self.current_values_deg):
             if i < len(self.actual_labels):
                 self.actual_labels[i].setText(f"ACT: {val:.2f}°")
 
@@ -231,24 +231,24 @@ class ManualControlWidget(QWidget):
             self.process_and_stream_sliders()
 
     def process_and_stream_sliders(self):
-        target_positions = [s.value() / 100.0 for s in self.sliders]
+        target_positions_deg = [s.value() / 100.0 for s in self.sliders]
         new_sent_positions = []
         
         for i in range(self.num_joints):
-            diff = target_positions[i] - self.last_sent_positions[i]
+            diff_deg = target_positions_deg[i] - self.last_sent_positions[i]
             
             # Dynamisches Limit pro Achse nutzen
             limit = self.velocity_limits[i] * self.speed_scale
             
-            if abs(diff) > limit:
+            if abs(diff_deg) > limit:
                 # Sanfte Annäherung
-                step = math.copysign(limit, diff)
-                new_pos = self.last_sent_positions[i] + step
+                step = math.copysign(limit, diff_deg)
+                new_pos_deg = self.last_sent_positions[i] + step
             else:
-                new_pos = target_positions[i]
+                new_pos_deg = target_positions_deg[i]
                 
-            new_sent_positions.append(new_pos)
-            self.target_labels[i].setText(f"SET: {new_pos:.2f}°")
+            new_sent_positions.append(new_pos_deg)
+            self.target_labels[i].setText(f"SET: {new_pos_deg:.2f}°")
 
         self.live_stream_move.emit([math.radians(deg) for deg in new_sent_positions])
         self.last_sent_positions = new_sent_positions
@@ -256,10 +256,10 @@ class ManualControlWidget(QWidget):
     def sync_sliders_to_actual(self):
         """Setzt die Slider exakt dorthin, wo der Roboter gerade physikalisch steht."""
         if hasattr(self, 'current_actual_values'):
-            for i, val in enumerate(self.current_actual_values):
+            for i, val in enumerate(self.current_values_deg):
                 if i < len(self.sliders):
                     self.sliders[i].blockSignals(True)
                     self.sliders[i].setValue(int(val * 100))
                     self.target_labels[i].setText(f"SET: {val:.2f}°")
                     self.sliders[i].blockSignals(False)
-            self.last_sent_positions = list(self.current_actual_values)
+            self.last_sent_positions = list(self.current_values_deg)
