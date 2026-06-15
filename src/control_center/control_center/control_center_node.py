@@ -279,12 +279,12 @@ class ControlCenterNode(Node):
         self.get_logger().info("Mission controller successfully stopped.")
 
     def on_enter_stop(self, event_data=None):
-        self.get_logger().warn("STOP INVOKED")
-        # TODO: implement stop
+        self.get_logger().warn("STOP INVOKED: Deactivating all active controllers for safety...")
+        self.deactivate_active_controller()
 
     def on_enter_error(self, event_data=None):
-        self.get_logger().fatal("ERROR STATE INVOKED")
-        # TODO: implement error
+        self.get_logger().fatal("ERROR STATE INVOKED: Hard-stopping robot by dropping controllers...")
+        self.deactivate_active_controller()
 
     def on_enter_emergency(self, event_data=None):
         self.get_logger().fatal("EMERGENCY STATE INVOKED")
@@ -360,6 +360,44 @@ class ControlCenterNode(Node):
             
         except Exception as e:
             self.get_logger().error(f"Error publishing system state: {e}", throttle_duration_sec=2.0)
+
+    def deactivate_active_controller(self):
+        """Helper method to turn off the currently running controller immediately."""
+        if not self.active_controller:
+            self.get_logger().info("No active controller running. System is already stationary.")
+            return
+
+        self.get_logger().info(f"Safety shutdown: Deactivating controller '{self.active_controller}'...")
+
+        if not self.switch_ctrl_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().error("CRITICAL: Service '/controller_manager/switch_controller' not available during safety shutdown!")
+            return
+
+        request = SwitchController.Request()
+        request.activate_controllers = []
+        request.deactivate_controllers = [self.active_controller]
+        # BEST_EFFORT sorgt dafür, dass der Stopp auch dann versucht wird, 
+        # wenn das System gerade Schluckauf hat. Alternativ STRICT nutzen.
+        request.strictness = SwitchReq.BEST_EFFORT 
+
+        try:
+            rate = self.create_rate(20)
+            future = self.switch_ctrl_client.call_async(request)
+            while not future.done(): 
+                rate.sleep()
+                
+            response = future.result()
+            if response is None or not response.ok:
+                self.get_logger().error(f"CRITICAL: Failed to deactivate controller '{self.active_controller}' during shutdown!")
+            else:
+                self.get_logger().info(f"Successfully deactivated controller '{self.active_controller}'. Hardware stopped.")
+                
+        except Exception as e:
+            self.get_logger().error(f"Exception during safety controller switch: {e}")
+
+        # Zustand bereinigen, egal ob der Service erfolgreich war oder nicht
+        self.active_node = None
+        self.active_controller = None
 
 def main(args=None):
     rclpy.init(args=args)

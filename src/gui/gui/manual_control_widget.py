@@ -6,19 +6,18 @@ class ManualControlWidget(QWidget):
     # Signal sendet die Liste der Achspositionen (in Grad) im Takt von update_widget
     live_stream_move = pyqtSignal(list)
     request_movement = pyqtSignal(bool)
+    speed_scale = pyqtSignal(float)
 
-    def __init__(self, store, update_rate=30, parent=None):
+    def __init__(self, store, parent=None):
         super().__init__(parent)
         self.store = store
         
         # Interner Zustand
-        self.update_rate = update_rate
-        self.velocity_limits = []
         self.limits = []
         self.num_joints = 0
         self.movement_enabled = False
         
-        self.speed_scale = 0.5
+        self.speed_scale_val = 0.5
         
         # Listen für dynamische UI-Elemente
         self.sliders = []
@@ -49,17 +48,11 @@ class ManualControlWidget(QWidget):
         self.velocity_limits = []
         self.last_sent_positions = [0.0] * self.num_joints
 
-        for min_rad, max_rad, v_max_rad_s in axis_data:
+        for min_rad, max_rad, _ in axis_data:
             # 1. Positionslimits für die Slider (in Grad)
             min_deg = math.degrees(min_rad)
             max_deg = math.degrees(max_rad)
             self.limits.append((min_deg, max_deg))
-            
-            # 2. Delta berechnen: v_max (in Grad/s) / Frequenz (Hz) = Grad pro Frame
-            v_max_deg_s = math.degrees(v_max_rad_s)
-            # Sicherheitsfaktor 0.9, damit wir knapp unter dem Limit bleiben
-            max_delta_per_frame = (v_max_deg_s / self.update_rate) * 0.95
-            self.velocity_limits.append(max_delta_per_frame)
 
         # Platzhalter entfernen
         self.main_layout.removeWidget(self.placeholder_label)
@@ -154,14 +147,21 @@ class ManualControlWidget(QWidget):
         self.speed_slider = QSlider(Qt.Orientation.Horizontal)
         self.speed_slider.setRange(0, 100)
         self.speed_slider.setValue(50)
-        self.speed_slider.valueChanged.connect(self.on_speed_slider_changed)
+        
+        # --- HIER DIE ÄNDERUNG ---
+        # valueChanged ändert NUR die Textanzeige (flüssig beim Ziehen)
+        self.speed_slider.valueChanged.connect(lambda val: self.speed_display.setText(f"{val}%"))
+        
+        # sliderReleased feuert erst, wenn die Maus losgelassen wird (Absetzen!)
+        self.speed_slider.sliderReleased.connect(self.on_speed_slider_released)
         
         speed_layout.addWidget(self.speed_slider)
         self.main_layout.addWidget(speed_container)
 
-    def on_speed_slider_changed(self, val):
-        self.speed_scale = val/100
-        self.speed_display.setText(f"{val}%")
+    def on_speed_slider_released(self):
+        val = self.speed_slider.value()
+        self.speed_scale_val = val / 100
+        self.speed_scale.emit(self.speed_scale_val)
 
     def on_lock_toggle_clicked(self, checked):
         """Wird aufgerufen, wenn der Benutzer manuell auf den Freischalt-Button klickt."""
@@ -228,34 +228,14 @@ class ManualControlWidget(QWidget):
 
         # 2. Zyklisches Streaming an den Roboter (nur wenn von FSM freigegeben)
         if self.movement_enabled:
-            self.process_and_stream_sliders()
-
-    def process_and_stream_sliders(self):
-        target_positions_deg = [s.value() / 100.0 for s in self.sliders]
-        new_sent_positions = []
-        
-        for i in range(self.num_joints):
-            diff_deg = target_positions_deg[i] - self.last_sent_positions[i]
-            
-            # Dynamisches Limit pro Achse nutzen
-            limit = self.velocity_limits[i] * self.speed_scale
-            
-            if abs(diff_deg) > limit:
-                # Sanfte Annäherung
-                step = math.copysign(limit, diff_deg)
-                new_pos_deg = self.last_sent_positions[i] + step
-            else:
-                new_pos_deg = target_positions_deg[i]
-                
-            new_sent_positions.append(new_pos_deg)
-            self.target_labels[i].setText(f"SET: {new_pos_deg:.2f}°")
-
-        self.live_stream_move.emit([math.radians(deg) for deg in new_sent_positions])
-        self.last_sent_positions = new_sent_positions
+            target_positions_deg = [s.value() / 100.0 for s in self.sliders]
+            for i in range(self.num_joints):
+                self.target_labels[i].setText(f"SET: {target_positions_deg[i]:.2f}°")
+            self.live_stream_move.emit([math.radians(deg) for deg in target_positions_deg])
 
     def sync_sliders_to_actual(self):
         """Setzt die Slider exakt dorthin, wo der Roboter gerade physikalisch steht."""
-        if hasattr(self, 'current_actual_values'):
+        if hasattr(self, 'current_values_deg'):
             for i, val in enumerate(self.current_values_deg):
                 if i < len(self.sliders):
                     self.sliders[i].blockSignals(True)

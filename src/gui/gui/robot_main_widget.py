@@ -37,7 +37,7 @@ class RobotMainWindow(QMainWindow):
         self.control_stack = QStackedWidget()
         self.control_stack.setFixedWidth(400) 
         
-        self.manual_page = ManualControlWidget(self.data_store, update_rate=30)
+        self.manual_page = ManualControlWidget(self.data_store)
         
         self.control_stack.addWidget(self.manual_page)
 
@@ -65,6 +65,7 @@ class RobotMainWindow(QMainWindow):
         self.control_header.arm_toggled.connect(self.node.arm_command)
         self.manual_page.request_movement.connect(self.node.req_manual_move)
         self.manual_page.live_stream_move.connect(self.node.stream_move)
+        self.manual_page.speed_scale.connect(self.node.set_speed_scale)
         # --- SLOTS VERBINDEN ---
         self.node.set_manual_move.connect(self.manual_page.set_movement_allowed)
         self.node.set_axis_limits.connect(self.manual_page.set_axis_limits)

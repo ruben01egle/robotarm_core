@@ -17,7 +17,7 @@ from .robot_main_widget import RobotMainWindow
 from .data_store import GuiDataStore
 
 from utility.RequestActionClient import RequestActionClient
-from robotarm_interface.srv import RequestAction
+from robotarm_interface.srv import RequestAction, SetFloat64
 from robotarm_interface.msg import SystemStatus
 
 class GuiRosNode(Node, QObject):
@@ -51,10 +51,15 @@ class GuiRosNode(Node, QObject):
 
         self.create_subscription(Log, '/rosout', self.log_cb, 10)
 
-        self.forward_command_pub = self.create_publisher(
+        self.manual_move_pub = self.create_publisher(
             Float64MultiArray,
-            '/forward_position_controller/commands', 
+            '/teleop_controller/commands', 
             1
+        )
+
+        self.speed_client = self.create_client(
+            SetFloat64, 
+            '/teleop_controller/scale_speed'
         )
 
         self.request_action_client = RequestActionClient(self)
@@ -105,7 +110,7 @@ class GuiRosNode(Node, QObject):
 
     @pyqtSlot(bool)
     def req_manual_move(self, move: bool):
-        controller_name = "forward_position_controller"
+        controller_name = "teleop_controller"
         if move:
             self.get_logger().info('Manual move requested')
             if self.request_action_client.send_request(RequestAction.Request.ACTION_MISSION, RequestAction.Request.TYPE_START, blocking=True, controller_names=controller_name):
@@ -120,10 +125,37 @@ class GuiRosNode(Node, QObject):
         try:
             msg = Float64MultiArray()
             msg.data = target
-            self.forward_command_pub.publish(msg)
+            self.manual_move_pub.publish(msg)
             
         except Exception as e:
             self.get_logger().error(f"Error while streaming manual move targets: {e}")
+
+    @pyqtSlot(float)
+    def set_speed_scale(self, target: float):
+        if not self.speed_client.service_is_ready():
+            self.get_logger().warn("Speed service '/teleop_controller/set_speed' is not available!")
+            return
+
+        try:
+            req = SetFloat64.Request()
+            req.data = float(target)
+
+            self.get_logger().info(f"Sending new speed scale to robot: {target * 100:.1f}%")
+            future = self.speed_client.call_async(req)
+            
+            # Inline callback to handle the service response safely
+            def cb(fut):
+                try:
+                    res = fut.result()
+                    if not res.success:
+                        self.get_logger().error(f"Speed scale request rejected: {res.message}")
+                except Exception as e:
+                    self.get_logger().error(f"Speed service call crashed: {e}")
+
+            future.add_done_callback(cb)
+            
+        except Exception as e:
+            self.get_logger().error(f"Failed to send speed scale service request: {e}")
 
     @pyqtSlot(bool)
     def stop(self, stop: bool):
