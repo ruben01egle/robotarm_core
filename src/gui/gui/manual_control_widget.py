@@ -1,24 +1,37 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QPushButton, QFrame
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+from PyQt6.QtCore import Qt
 import math
 
-class ManualControlWidget(QWidget):
-    # Signal sendet die Liste der Achspositionen (in Grad) im Takt von update_widget
-    live_stream_move = pyqtSignal(list)
-    request_movement = pyqtSignal(bool)
-    speed_scale = pyqtSignal(float)
+from std_msgs.msg import Float64MultiArray
 
-    def __init__(self, store, parent=None):
+from utility.RequestActionClient import RequestActionClient
+from robotarm_interface.srv import RequestAction, SetFloat64
+
+class ManualControlWidget(QWidget):
+    def __init__(self, store, node, parent=None):
         super().__init__(parent)
         self.store = store
+        self.node = node
+        self.name = "ManualControlWidget"
+        self.required_controller = "teleop_controller"
+
+        self.request_action_client = RequestActionClient(self.node)
+        self.joint_target_pub = self.node.create_publisher(
+            Float64MultiArray,
+            '/teleop_controller/commands', 
+            1
+        )
+
+        self.speed_scale_client = self.node.create_client(
+            SetFloat64, 
+            '/teleop_controller/scale_speed'
+        )
         
         # Interner Zustand
         self.limits = []
         self.num_joints = 0
         self.movement_enabled = False
-        
-        self.speed_scale_val = 0.5
-        
+                
         # Listen für dynamische UI-Elemente
         self.sliders = []
         self.target_labels = []
@@ -34,7 +47,6 @@ class ManualControlWidget(QWidget):
         self.placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.main_layout.addWidget(self.placeholder_label)
 
-    @pyqtSlot(list)
     def set_axis_limits(self, axis_data: list):
         """
         Erwartet Liste von Tuples: [(min, max, v_max_rad_s), ...]
@@ -136,7 +148,7 @@ class ManualControlWidget(QWidget):
         speed_header = QHBoxLayout()
         speed_title = QLabel("Speed Scale")
         speed_title.setStyleSheet("font-weight: bold; color: #3498db; border: none;")
-        self.speed_display = QLabel("50%")
+        self.speed_display = QLabel("100%")
         self.speed_display.setStyleSheet("font-weight: bold; color: #f1c40f; border: none;")
         
         speed_header.addWidget(speed_title)
@@ -145,8 +157,8 @@ class ManualControlWidget(QWidget):
         speed_layout.addLayout(speed_header)
         
         self.speed_slider = QSlider(Qt.Orientation.Horizontal)
-        self.speed_slider.setRange(0, 100)
-        self.speed_slider.setValue(50)
+        self.speed_slider.setRange(0, 200)
+        self.speed_slider.setValue(100)
         
         # --- HIER DIE ÄNDERUNG ---
         # valueChanged ändert NUR die Textanzeige (flüssig beim Ziehen)
@@ -160,24 +172,45 @@ class ManualControlWidget(QWidget):
 
     def on_speed_slider_released(self):
         val = self.speed_slider.value()
-        self.speed_scale_val = val / 100
-        self.speed_scale.emit(self.speed_scale_val)
+        target = val / 100
+        if not self.speed_scale_client.service_is_ready():
+            self.node.get_logger().warn("Speed service '/teleop_controller/set_speed' is not available!")
+            return
+        try:
+            req = SetFloat64.Request()
+            req.data = float(target)
+            future = self.speed_scale_client.call_async(req)
+            
+            # Inline callback to handle the service response safely
+            def cb(fut):
+                try:
+                    res = fut.result()
+                    if not res.success:
+                        self.node.get_logger().error(f"Speed scale request rejected: {res.message}")
+                except Exception as e:
+                    self.node.get_logger().error(f"Speed service call crashed: {e}")
 
-    def on_lock_toggle_clicked(self, checked):
+            future.add_done_callback(cb)
+            
+        except Exception as e:
+            self.node.get_logger().error(f"Failed to send speed scale service request: {e}")
+
+    def on_lock_toggle_clicked(self, is_checked):
         """Wird aufgerufen, wenn der Benutzer manuell auf den Freischalt-Button klickt."""
-        
-        # 1. Signale des Buttons kurz blockieren
         self.btn_toggle_lock.blockSignals(True)
-        
-        # 2. Den Button visuell auf den aktuellen FSM-Zustand zwingen.
-        #    Weil Signale blockiert sind, wird HIERBEI kein neues clicked-Event ausgelöst!
         self.btn_toggle_lock.setChecked(self.movement_enabled)
-        
-        # 3. Blockierung sofort wieder aufheben, damit zukünftige Klicks erkannt werden
         self.btn_toggle_lock.blockSignals(False)
         
-        # 4. Jetzt das Signal mit dem vom Benutzer GEWÜNSCHTEN Zustand (checked) abfeuern
-        self.request_movement.emit(checked)
+        if is_checked:
+            req_type = RequestAction.Request.TYPE_START
+        else:
+            req_type = RequestAction.Request.TYPE_STOP
+
+        self.request_action_client.send_request(
+            action_id=RequestAction.Request.ACTION_MISSION,
+            request_type=req_type,
+            node_name=self.name,
+            controller_names=self.required_controller)
 
     def update_ui_lock_state(self):
         """Aktiviert oder deaktiviert alle Eingabeelemente basierend auf movement_enabled."""
@@ -194,12 +227,7 @@ class ManualControlWidget(QWidget):
             self.btn_toggle_lock.setStyleSheet("background-color: #2ecc71; color: white; font-weight: bold;")
             self.btn_toggle_lock.setChecked(False)
 
-    @pyqtSlot(bool)
     def set_movement_allowed(self, allowed: bool):
-        """
-        Slot, der von außen aufgerufen wird, um die Slider freizuschalten oder zu sperren.
-        Kann direkt mit einem PyQt-Signal der ROS-Bridge verbunden werden.
-        """
         if self.movement_enabled != allowed:
             self.movement_enabled = allowed
             self.update_ui_lock_state()
@@ -215,6 +243,8 @@ class ManualControlWidget(QWidget):
         Nimmt jetzt keine Argumente mehr entgegen.
         """
         if self.num_joints == 0:
+            axis_data = self.store.get_joint_limits()
+            self.set_axis_limits(axis_data)
             return
 
         # 1. Aktuelle IST-Werte aus dem Store holen und anzeigen
@@ -226,12 +256,21 @@ class ManualControlWidget(QWidget):
             if i < len(self.actual_labels):
                 self.actual_labels[i].setText(f"ACT: {val:.2f}°")
 
+        status = self.store.get_status()
+        active_nodes_string = status["active_nodes"]
+        if self.name in active_nodes_string:
+            self.set_movement_allowed(True)
+        else:
+            self.set_movement_allowed(False)
+
         # 2. Zyklisches Streaming an den Roboter (nur wenn von FSM freigegeben)
         if self.movement_enabled:
             target_positions_deg = [s.value() / 100.0 for s in self.sliders]
             for i in range(self.num_joints):
                 self.target_labels[i].setText(f"SET: {target_positions_deg[i]:.2f}°")
-            self.live_stream_move.emit([math.radians(deg) for deg in target_positions_deg])
+            msg = Float64MultiArray()
+            msg.data = [math.radians(deg) for deg in target_positions_deg]
+            self.joint_target_pub.publish(msg)
 
     def sync_sliders_to_actual(self):
         """Setzt die Slider exakt dorthin, wo der Roboter gerade physikalisch steht."""

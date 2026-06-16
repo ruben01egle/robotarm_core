@@ -353,15 +353,15 @@ class ControlCenterNode(Node):
             msg.armed = self.state in [SystemState.ARMED, SystemState.MISSION]
             msg.stopped = self.state in [SystemState.STOP]
             
-            # msg.active_controller = self.active_controller if self.active_controller else ""
-            # msg.active_node = self.active_node if self.active_node else ""
+            msg.active_controllers = self.active_controller if self.active_controller else ""
+            msg.active_nodes = self.active_node if self.active_node else ""
 
             self.status_pub.publish(msg)
             
         except Exception as e:
             self.get_logger().error(f"Error publishing system state: {e}", throttle_duration_sec=2.0)
 
-    def deactivate_active_controller(self):
+    def deactivate_active_controller(self, blocking=False):
         """Helper method to turn off the currently running controller immediately."""
         if not self.active_controller:
             self.get_logger().info("No active controller running. System is already stationary.")
@@ -369,35 +369,63 @@ class ControlCenterNode(Node):
 
         self.get_logger().info(f"Safety shutdown: Deactivating controller '{self.active_controller}'...")
 
-        if not self.switch_ctrl_client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().error("CRITICAL: Service '/controller_manager/switch_controller' not available during safety shutdown!")
+        if not self.switch_ctrl_client.service_is_ready():
+            self.get_logger().error("Service '/controller_manager/switch_controller' not ready!")
             return
 
         request = SwitchController.Request()
         request.activate_controllers = []
         request.deactivate_controllers = [self.active_controller]
-        # BEST_EFFORT sorgt dafür, dass der Stopp auch dann versucht wird, 
-        # wenn das System gerade Schluckauf hat. Alternativ STRICT nutzen.
         request.strictness = SwitchReq.BEST_EFFORT 
 
         try:
-            rate = self.create_rate(20)
-            future = self.switch_ctrl_client.call_async(request)
-            while not future.done(): 
-                rate.sleep()
-                
-            response = future.result()
-            if response is None or not response.ok:
-                self.get_logger().error(f"CRITICAL: Failed to deactivate controller '{self.active_controller}' during shutdown!")
+            if blocking:
+                response = self.switch_ctrl_client.call(request)
+                if response is None or not response.ok:
+                    self.get_logger().error(f"Failed to deactivate controller '{self.active_controller}'!")
+                else:
+                    self.get_logger().info(f"Successfully deactivated controller '{self.active_controller}'.")
             else:
-                self.get_logger().info(f"Successfully deactivated controller '{self.active_controller}'. Hardware stopped.")
+                rate = self.create_rate(20)
+                future = self.switch_ctrl_client.call_async(request)
+                while not future.done(): 
+                    rate.sleep()
+                    
+                response = future.result()
+                if response is None or not response.ok:
+                    self.get_logger().error(f"Failed to deactivate controller '{self.active_controller}'!")
+                else:
+                    self.get_logger().info(f"Successfully deactivated controller '{self.active_controller}'. Hardware stopped.")
                 
         except Exception as e:
             self.get_logger().error(f"Exception during safety controller switch: {e}")
 
-        # Zustand bereinigen, egal ob der Service erfolgreich war oder nicht
         self.active_node = None
         self.active_controller = None
+
+    def perform_cleanup(self):
+        """
+        Safely secures the robot hardware on node shutdown, BUT ONLY if it was
+        running or armed. Prevents bypassing EMERGENCY (FINALIZED) or ERROR states.
+        """
+        if self.state in [SystemState.IDLE, SystemState.ERROR, SystemState.EMERGENCY]:
+            self.get_logger().info(f"Shutdown: System already in safe state ({self.state.name}). Skipping cleanup.")
+            return
+
+        self.get_logger().warn(f"Unexpected shutdown from state {self.state.name}! Securing hardware...")
+        
+        self.deactivate_active_controller(blocking=True)
+
+        try:
+            if self.hw_state_client.service_is_ready():
+                self.get_logger().info(f"Setting hardware '{self.hardware_name}' to INACTIVE...")
+                request = SetHardwareComponentState.Request()
+                request.name = self.hardware_name
+                request.target_state.id = LifecycleState.PRIMARY_STATE_INACTIVE
+                self.hw_state_client.call(request)
+                self.get_logger().info("Hardware successfully set to INACTIVE.")
+        except Exception as e:
+            print(f"[Shutdown Cleanup] Failed to deactivate hardware: {e}")
 
 def main(args=None):
     rclpy.init(args=args)

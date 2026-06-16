@@ -2,7 +2,6 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QStackedWidget, QTextEdit)
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QTextCursor
-import os
 
 # Deine Widgets importieren
 from .telemetry_widget import TelemetryDashboard
@@ -22,7 +21,7 @@ class RobotMainWindow(QMainWindow):
         self.main_layout = QVBoxLayout(self.central_widget)
 
         # 1. OBEN: Navigation (Haupt-Modi)
-        self.control_header = ControlHeader(self.data_store)
+        self.control_header = ControlHeader(self.data_store, self.node)
 
         # 2. MITTE: Side-by-Side Content
         self.content_layout = QHBoxLayout()
@@ -37,7 +36,7 @@ class RobotMainWindow(QMainWindow):
         self.control_stack = QStackedWidget()
         self.control_stack.setFixedWidth(400) 
         
-        self.manual_page = ManualControlWidget(self.data_store)
+        self.manual_page = ManualControlWidget(self.data_store, self.node)
         
         self.control_stack.addWidget(self.manual_page)
 
@@ -58,18 +57,6 @@ class RobotMainWindow(QMainWindow):
         self.init_log_console()
 
         self.resize(1400, 1000)
-
-        # --- SIGNALE VERBINDEN --- 
-        self.control_header.emergency_pressed.connect(self.node.emergency)
-        self.control_header.stop_toggled.connect(self.node.stop)
-        self.control_header.arm_toggled.connect(self.node.arm_command)
-        self.manual_page.request_movement.connect(self.node.req_manual_move)
-        self.manual_page.live_stream_move.connect(self.node.stream_move)
-        self.manual_page.speed_scale.connect(self.node.set_speed_scale)
-        # --- SLOTS VERBINDEN ---
-        self.node.set_manual_move.connect(self.manual_page.set_movement_allowed)
-        self.node.set_axis_limits.connect(self.manual_page.set_axis_limits)
-        self.node.set_axis_limits.connect(self.dashboard.set_axis_limits)
     
         # Timer (ca. 30 FPS für flüssige Plots)
         self.update_timer = QTimer()

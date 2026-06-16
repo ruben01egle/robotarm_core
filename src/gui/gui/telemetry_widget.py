@@ -25,16 +25,15 @@ class TelemetryDashboard(QWidget):
         self.placeholder_label.setStyleSheet("color: #7f8c8d; font-size: 14px;")
         self.main_layout.addWidget(self.placeholder_label)
 
-    @pyqtSlot(list)
-    def set_axis_limits(self, new_limits_rad: list):
+    def set_axis_limits(self, axis_data: list):
         """
         Wird beim Startup von außen aufgerufen, sobald die URDF geladen ist.
         Baut die gesamte UI dynamisch für X Achsen auf.
         """
-        if not new_limits_rad or self.num_joints > 0:
+        if not axis_data or self.num_joints > 0:
             return # Verhindert doppelte Initialisierung
             
-        self.num_joints = len(new_limits_rad)
+        self.num_joints = len(axis_data)
         
         # 1. Kacheln dynamisch erzeugen (ID startet bei 1)
         self.tiles = [JointTile(i + 1) for i in range(self.num_joints)]
@@ -136,6 +135,8 @@ class TelemetryDashboard(QWidget):
     def update_all(self):
         # Solange keine Achsen da sind, müssen wir auch nichts plotten
         if self.num_joints == 0:
+            axis_data = self.store.get_joint_limits()
+            self.set_axis_limits(axis_data)
             return
             
         frames = self.store.get_plot_data()

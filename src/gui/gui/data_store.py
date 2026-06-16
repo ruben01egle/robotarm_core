@@ -16,6 +16,10 @@ class GuiDataStore:
         self.armed = False
         self.state = "UNKNOWN"
         self.stopped = False
+        self.active_nodes = ""
+        self.active_controllers = ""
+
+        self.joint_limits = list()
 
         # 3. Log-Nachrichten aus der ROS-Welt
         self.log_queue = deque(maxlen=50)
@@ -26,6 +30,9 @@ class GuiDataStore:
             self.armed = False
             self.state = "UNKNOWN"
             self.stopped = False
+            self.active_nodes = ""
+            self.active_controllers = ""
+            self.joint_limits = list()
             self.frames.clear()
             self.log_queue.clear()
 
@@ -42,12 +49,22 @@ class GuiDataStore:
         with self._lock:
             self.frames.append(frame)
 
-    def set_status(self, state, connected, armed, stopped):
+    def set_joint_limits(self, limits: list):
+        with self._lock:
+            self.joint_limits = limits
+
+    def get_joint_limits(self):
+        with self._lock:
+            return self.joint_limits
+
+    def set_status(self, state, connected, armed, stopped, active_nodes, active_controllers):
         with self._lock:
             self.state = state
             self.connected = connected
             self.armed = armed
             self.stopped = stopped
+            self.active_nodes = active_nodes
+            self.active_controllers = active_controllers
 
     def add_log(self, level, name, text):
         """Wird von der ROS-Node aufgerufen, um Logs zu puffern."""
@@ -90,7 +107,9 @@ class GuiDataStore:
                 "connected": self.connected,
                 "armed": self.armed,
                 "state": self.state,
-                "stopped": self.stopped
+                "stopped": self.stopped,
+                "active_nodes": self.active_nodes,
+                "active_controllers": self.active_controllers
             }
     
     # --- Live-Getter für dein ManualControlWidget ---

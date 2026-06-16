@@ -5,28 +5,20 @@ import xml.etree.ElementTree as ET
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from std_msgs.msg import Float64MultiArray
 from sensor_msgs.msg import JointState
 from rcl_interfaces.msg import Log
 from rcl_interfaces.srv import GetParameters
 
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, QObject
 
 from .robot_main_widget import RobotMainWindow
 from .data_store import GuiDataStore
 
-from utility.RequestActionClient import RequestActionClient
-from robotarm_interface.srv import RequestAction, SetFloat64
 from robotarm_interface.msg import SystemStatus
 
-class GuiRosNode(Node, QObject):
-    set_manual_move = pyqtSignal(bool)
-    set_axis_limits = pyqtSignal(list)
-
+class GuiRosNode(Node):
     def __init__(self, data_store):
         Node.__init__(self, 'gui_ros_node')
-        QObject.__init__(self)
         self.store = data_store
 
         telemetry_qos = QoSProfile(
@@ -51,22 +43,9 @@ class GuiRosNode(Node, QObject):
 
         self.create_subscription(Log, '/rosout', self.log_cb, 10)
 
-        self.manual_move_pub = self.create_publisher(
-            Float64MultiArray,
-            '/teleop_controller/commands', 
-            1
-        )
-
-        self.speed_client = self.create_client(
-            SetFloat64, 
-            '/teleop_controller/scale_speed'
-        )
-
-        self.request_action_client = RequestActionClient(self)
-
         self.urdf_timer = self.create_timer(1.0, self.fetch_urdf_limits_startup)
 
-        self.store.set_status(state="UNKNOWN", connected=False, armed=False, stopped=False)
+        self.store.set_status(state="UNKNOWN", connected=False, armed=False, stopped=False, active_nodes="", active_controllers="")
 
     def joint_state_cb(self, msg: JointState):
         try:
@@ -96,91 +75,15 @@ class GuiRosNode(Node, QObject):
         self.store.add_log(level_str, msg.name, msg.msg)
 
     def system_status_cb(self, msg: SystemStatus):
-        self.store.set_status(msg.state, msg.connected, msg.armed, msg.stopped)
-
-    # functions for gui to attach signals to
-    @pyqtSlot(bool)
-    def arm_command(self, arm: bool):
-        if arm:
-            self.get_logger().info('Arm robot requested')
-            self.request_action_client.send_request(RequestAction.Request.ACTION_ARM_ROBOT, RequestAction.Request.TYPE_START, False)
-        else:
-            self.get_logger().info('Disarm robot requested')
-            self.request_action_client.send_request(RequestAction.Request.ACTION_ARM_ROBOT, RequestAction.Request.TYPE_STOP, False)
-
-    @pyqtSlot(bool)
-    def req_manual_move(self, move: bool):
-        controller_name = "teleop_controller"
-        if move:
-            self.get_logger().info('Manual move requested')
-            if self.request_action_client.send_request(RequestAction.Request.ACTION_MISSION, RequestAction.Request.TYPE_START, blocking=True, controller_names=controller_name):
-                self.set_manual_move.emit(True)
-        else:
-            self.get_logger().info('Manual move stop requested')
-            if self.request_action_client.send_request(RequestAction.Request.ACTION_MISSION, RequestAction.Request.TYPE_STOP, blocking=True, controller_names=controller_name):
-                self.set_manual_move.emit(False)
-
-    @pyqtSlot(list)
-    def stream_move(self, target: list):
-        try:
-            msg = Float64MultiArray()
-            msg.data = target
-            self.manual_move_pub.publish(msg)
-            
-        except Exception as e:
-            self.get_logger().error(f"Error while streaming manual move targets: {e}")
-
-    @pyqtSlot(float)
-    def set_speed_scale(self, target: float):
-        if not self.speed_client.service_is_ready():
-            self.get_logger().warn("Speed service '/teleop_controller/set_speed' is not available!")
-            return
-
-        try:
-            req = SetFloat64.Request()
-            req.data = float(target)
-
-            self.get_logger().info(f"Sending new speed scale to robot: {target * 100:.1f}%")
-            future = self.speed_client.call_async(req)
-            
-            # Inline callback to handle the service response safely
-            def cb(fut):
-                try:
-                    res = fut.result()
-                    if not res.success:
-                        self.get_logger().error(f"Speed scale request rejected: {res.message}")
-                except Exception as e:
-                    self.get_logger().error(f"Speed service call crashed: {e}")
-
-            future.add_done_callback(cb)
-            
-        except Exception as e:
-            self.get_logger().error(f"Failed to send speed scale service request: {e}")
-
-    @pyqtSlot(bool)
-    def stop(self, stop: bool):
-        if stop:
-            self.get_logger().info('Stop robot requested')
-            self.request_action_client.send_request(RequestAction.Request.INVOKE_STOP, RequestAction.Request.TYPE_START, False)
-        else:
-            self.get_logger().info('Release robot requested')
-            self.request_action_client.send_request(RequestAction.Request.INVOKE_STOP, RequestAction.Request.TYPE_STOP, False)
-
-    @pyqtSlot()
-    def emergency(self):
-        self.get_logger().error('EMERGENCY STOP INWOKED')
-        self.request_action_client.send_request(RequestAction.Request.INVOKE_EMERGENCY, RequestAction.Request.TYPE_START, False)
+        self.store.set_status(msg.state, msg.connected, msg.armed, msg.stopped, msg.active_nodes, msg.active_controllers)
 
     def fetch_urdf_limits_startup(self):
-        """Versucht beim Startup die URDF zu laden. Stoppt sich selbst bei Erfolg."""
-        # Service-Client für die Parameter des robot_state_publisher erstellen
         param_client = self.create_client(GetParameters, '/robot_state_publisher/get_parameters')
         
         if not param_client.service_is_ready():
-            self.get_logger().info("Warte auf '/robot_state_publisher' um URDF-Limits zu lesen...")
+            self.get_logger().info("Waiting for'/robot_state_publisher' to read URDF...")
             return
 
-        # Wenn der Service da ist, Timer stoppen, damit wir das nur EINMAL machen
         self.urdf_timer.cancel()
 
         # Parameter abfragen
@@ -188,14 +91,13 @@ class GuiRosNode(Node, QObject):
         req.names = ['robot_description']
         
         future = param_client.call_async(req)
-        # Wir hängen einen Callback an das Future, sobald die Antwort da ist
         future.add_done_callback(self.urdf_response_cb)
 
     def urdf_response_cb(self, future):
         try:
             response = future.result()
             if not response or not response.values:
-                self.get_logger().error("URDF-Parameter 'robot_description' ist leer!")
+                self.get_logger().error("URDF-Parameter 'robot_description' is empty!")
                 return
 
             # Den XML-String aus dem ROS-Parameter extrahieren
@@ -206,9 +108,7 @@ class GuiRosNode(Node, QObject):
             
             if limits:
                 self.get_logger().info(f"URDF parsed succesfully: {len(limits)} axis found!")
-                # --- HIER FEUERT DAS SIGNAL ---
-                # Qt reicht diese Liste jetzt an dein ManualControl und TelemetryDashboard weiter
-                self.set_axis_limits.emit(limits)
+                self.store.set_joint_limits(limits)
             else:
                 self.get_logger().warn("No axis found")
 
@@ -216,7 +116,6 @@ class GuiRosNode(Node, QObject):
             self.get_logger().error(f"Error parsing URDF: {e}")
 
     def parse_urdf_limits(self, urdf_xml_str: str) -> list:
-        """Parst den URDF-String und gibt eine Liste von (min, max) in RADIAN zurück."""
         limits_list = []
         try:
             root = ET.fromstring(urdf_xml_str)
