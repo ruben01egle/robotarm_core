@@ -157,7 +157,7 @@ class ManualControlWidget(QWidget):
         speed_layout.addLayout(speed_header)
         
         self.speed_slider = QSlider(Qt.Orientation.Horizontal)
-        self.speed_slider.setRange(0, 200)
+        self.speed_slider.setRange(10, 200)
         self.speed_slider.setValue(100)
         
         # --- HIER DIE ÄNDERUNG ---
