@@ -24,7 +24,7 @@ def generate_launch_description():
             name='control_center',
             output='screen',
             parameters=[{
-                'hardware_component_name': 'MoteusHardwareSystem'
+                'hardware_component_name': 'moteus_hardware_system'
             }]
         ),
         
