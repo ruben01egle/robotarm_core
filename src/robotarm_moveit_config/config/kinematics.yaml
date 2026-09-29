@@ -1,0 +1,44 @@
+# Inverse kinematics (IK) solver per planning group.
+#
+# Loaded by MoveItConfigsBuilder as parameter "robot_description_kinematics" and used by move_group
+# (pose goals, Pilz LIN/CIRC, Cartesian paths) and by the RViz MotionPlanning panel (interactive marker).
+#
+# Solver: pick_ik (package ros-jazzy-pick-ik). Numeric solver, works for any serial chain, supports
+# joint limits and optional cost terms. It is a drop-in replacement for KDL with better success rates.
+#
+# Fallback if pick_ik is not installed: replace the plugin line with
+#   kinematics_solver: kdl_kinematics_plugin/KDLKinematicsPlugin
+#   kinematics_solver_search_resolution: 0.005
+# and delete the pick_ik specific parameters below (KDL ignores them but warns).
+#
+# Switching to our own IK later (see README, section "Using our own IK"):
+#   1. Implement a class derived from kinematics::KinematicsBase (moveit_core,
+#      <moveit/kinematics_base/kinematics_base.hpp>), e.g. robotarm_rbd/MoveItKinematicsPlugin, that
+#      wraps the closed-form IK of robotarm_rbd, and export it with pluginlib
+#      (base_class_type="kinematics::KinematicsBase").
+#   2. Replace kinematics_solver below with that plugin name and put its own parameters here.
+#   Nothing else in this package has to change.
+arm:
+  kinematics_solver: pick_ik/PickIkPlugin
+  kinematics_solver_timeout: 0.05  # [s] per IK call
+
+  # "global": gradient descent + memetic (evolutionary) search over the whole joint space.
+  #           Finds solutions far from the seed, needed for planning to arbitrary pose goals.
+  # "local":  gradient descent from the seed only; faster, but fails for far goals (use for servoing).
+  mode: global
+
+  # Acceptance thresholds of a solution. Pilz LIN/CIRC solve IK for every sample of the path, so
+  # these values directly limit how straight/accurate a LIN motion is. With the pick_ik defaults
+  # (1 mm) a 5 cm LIN ended 0.8 mm short; 0.1 mm keeps the error below 0.1 mm.
+  position_threshold: 0.0001    # [m]
+  orientation_threshold: 0.001  # [rad]
+  cost_threshold: 0.000001
+
+  # Weights of the cost function (position vs. orientation error)
+  position_scale: 1.0
+  rotation_scale: 0.5
+
+  # Optional cost terms (0 = off). minimal_displacement_weight > 0 prefers solutions close to the seed
+  # (current state), which makes dragging the RViz marker smoother.
+  minimal_displacement_weight: 0.0
+  gd_step_size: 0.0001

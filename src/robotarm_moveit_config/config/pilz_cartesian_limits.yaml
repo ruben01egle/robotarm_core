@@ -1,0 +1,11 @@
+# Cartesian limits of the TCP for the Pilz planner (LIN and CIRC motions).
+# Merged into "robot_description_planning" by MoveItConfigsBuilder.
+#
+# !!! PRELIMINARY VALUES - VERIFY ON HARDWARE !!!
+# Much lower than the Setup Assistant defaults (1.0 m/s, 2.25 m/s^2, -5.0 m/s^2, 1.57 rad/s).
+# The request's velocity/acceleration scaling factor is applied on top of these values.
+cartesian_limits:
+  max_trans_vel: 0.1    # [m/s]     translational velocity
+  max_trans_acc: 0.25   # [m/s^2]   translational acceleration
+  max_trans_dec: -0.25  # [m/s^2]   translational deceleration (must be negative)
+  max_rot_vel: 0.5      # [rad/s]   rotational velocity

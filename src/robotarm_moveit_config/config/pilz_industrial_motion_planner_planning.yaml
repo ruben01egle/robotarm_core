@@ -1,0 +1,30 @@
+# Pilz industrial motion planner pipeline: deterministic, analytic motions as known from industrial
+# robot controllers.
+#   PTP  - point-to-point in joint space, all axes start/stop synchronously (trapezoidal profile)
+#   LIN  - straight line of the TCP in Cartesian space (uses IK, limits: pilz_cartesian_limits.yaml)
+#   CIRC - circular arc of the TCP (needs an interim or center point as path constraint)
+# Pilz does NOT avoid obstacles; it only rejects a trajectory that collides (ValidateSolution).
+# It needs acceleration limits for every joint (joint_limits.yaml).
+#
+# Loaded by MoveItConfigsBuilder.planning_pipelines(); identical to the moveit_configs_utils default,
+# kept here so all planner settings of this robot are visible in one place.
+
+planning_plugins:
+  - pilz_industrial_motion_planner/CommandPlanner
+default_planner_config: PTP
+
+request_adapters:
+  - default_planning_request_adapters/ResolveConstraintFrames
+  - default_planning_request_adapters/ValidateWorkspaceBounds
+  - default_planning_request_adapters/CheckStartStateBounds
+  - default_planning_request_adapters/CheckStartStateCollision
+# No time parameterization adapter: Pilz already produces timed trajectories.
+response_adapters:
+  - default_planning_response_adapters/ValidateSolution
+  - default_planning_response_adapters/DisplayMotionPath
+
+# Extra move_group capabilities that come with Pilz: blended motion sequences
+# (action /sequence_move_group, service /plan_sequence_path).
+capabilities: >-
+    pilz_industrial_motion_planner/MoveGroupSequenceAction
+    pilz_industrial_motion_planner/MoveGroupSequenceService

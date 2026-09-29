@@ -1,0 +1,40 @@
+# ros2_control configuration FOR THE DEMO ONLY (launch/demo.launch.py, mock hardware).
+#
+# On the real robot the controller_manager runs on the RT PC and is configured in
+# robotarm_firmware_lnx; this file is not used there. Keep the controller name and joints in sync
+# with config/moveit_controllers.yaml and with the firmware's controllers.yaml.
+
+controller_manager:
+  ros__parameters:
+    update_rate: 500  # [Hz]
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    joint_trajectory_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+joint_trajectory_controller:
+  ros__parameters:
+    joints:
+      - axis1
+      - axis2
+      - axis3
+      - axis4
+      - axis5
+      - axis6
+    # Position + velocity command: the controller forwards the sampled trajectory position and
+    # velocity (feed-forward). No PID gains are needed for this combination.
+    command_interfaces:
+      - position
+      - velocity
+    state_interfaces:
+      - position
+      - velocity
+    # Goals must contain all six joints.
+    allow_partial_joints_goal: false
+    constraints:
+      # [rad/s] joint velocity below which the robot counts as stopped at the end of a trajectory
+      stopped_velocity_tolerance: 0.01
+      # [s] allowed time after the trajectory end to reach the goal (0 = no check)
+      goal_time: 0.0

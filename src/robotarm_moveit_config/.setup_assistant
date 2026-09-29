@@ -1,0 +1,11 @@
+moveit_setup_assistant_config:
+  urdf:
+    package: robotarm_description
+    relative_path: urdf/robotarm.urdf.xacro
+    xacro_args: use_hardware:=false
+  srdf:
+    relative_path: config/robotarm.srdf
+  package_settings:
+    author_name: Samuel Wuetherich
+    author_email: Samuel.Wuetherich@t-online.de
+    generated_timestamp: 1790704785

@@ -1,0 +1,35 @@
+# OMPL planning pipeline (sampling-based planners, default pipeline of the RViz panel).
+#
+# OMPL finds collision-free joint-space paths with randomized planners (RRTConnect by default).
+# Paths are not deterministic and not straight in Cartesian space; the time parameterization
+# (AddTimeOptimalParameterization) is done afterwards using joint_limits.yaml.
+#
+# Loaded by MoveItConfigsBuilder.planning_pipelines(). Because this file does not define the
+# top-level key "planner_configs", MoveItConfigsBuilder merges the definitions of all OMPL planners
+# from moveit_configs_utils/default_configs/ompl_defaults.yaml.
+
+planning_plugins:
+  - ompl_interface/OMPLPlanner
+
+# Adapters run before (request) and after (response) the planner, in this order.
+request_adapters:
+  - default_planning_request_adapters/ResolveConstraintFrames
+  - default_planning_request_adapters/ValidateWorkspaceBounds
+  - default_planning_request_adapters/CheckStartStateBounds
+  - default_planning_request_adapters/CheckStartStateCollision
+response_adapters:
+  - default_planning_response_adapters/AddTimeOptimalParameterization
+  - default_planning_response_adapters/ValidateSolution
+  - default_planning_response_adapters/DisplayMotionPath
+
+# Per planning group settings. The planners listed here appear in the RViz planner dropdown.
+arm:
+  default_planner_config: RRTConnect
+  planner_configs:
+    - RRTConnect
+    - RRTstar
+    - PRM
+    - BiTRRT
+  # Max. joint-space distance (fraction of the state space extent) between two collision-checked
+  # states. Smaller = safer against tunneling through thin obstacles, but slower.
+  longest_valid_segment_fraction: 0.005

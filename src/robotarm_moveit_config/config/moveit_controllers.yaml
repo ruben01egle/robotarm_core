@@ -1,0 +1,37 @@
+# How move_group executes planned trajectories.
+#
+# moveit_simple_controller_manager sends each trajectory to a FollowJointTrajectory action server
+# (<controller name>/<action_ns>), here /joint_trajectory_controller/follow_joint_trajectory.
+# It does NOT talk to the ros2_control controller_manager and never activates/deactivates
+# controllers. On the real robot, control_center activates joint_trajectory_controller (mission
+# request); MoveIt only uses it while it is active. See README, "Design decisions".
+#
+# The controller name must match the joint_trajectory_controller configured in ros2_control:
+#   - demo:       config/ros2_controllers.yaml of this package
+#   - real robot: controllers.yaml in robotarm_firmware_lnx (still to be added, see README)
+
+moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager
+
+moveit_simple_controller_manager:
+  controller_names:
+    - joint_trajectory_controller
+
+  joint_trajectory_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    joints:
+      - axis1
+      - axis2
+      - axis3
+      - axis4
+      - axis5
+      - axis6
+
+# Execution monitoring of the TrajectoryExecutionManager
+trajectory_execution:
+  # Abort if execution takes longer than scaling * planned duration + margin
+  allowed_execution_duration_scaling: 1.2
+  allowed_goal_duration_margin: 0.5
+  # [rad] max. deviation between the trajectory start and the current state before execution starts
+  allowed_start_tolerance: 0.01
