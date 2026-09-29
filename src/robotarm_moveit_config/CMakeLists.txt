@@ -13,4 +13,7 @@ install(
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 install(FILES .setup_assistant DESTINATION share/${PROJECT_NAME})
 
+# Test/demo script, run with: ros2 run robotarm_moveit_config demo_motions.py
+install(PROGRAMS scripts/demo_motions.py DESTINATION lib/${PROJECT_NAME})
+
 ament_package()
