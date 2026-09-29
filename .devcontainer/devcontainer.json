@@ -41,5 +41,6 @@
             ]
         }
     },
-    "remoteUser": "root"
+    "remoteUser": "root",
+    "postCreateCommand": "git config --global --add safe.directory '*'"
 }
