@@ -592,6 +592,9 @@ Reference implementations: `kdl_kinematics_plugin` (moveit_kinematics) and pick_
 - **move_group crashes on shutdown**: pressing Ctrl-C prints a segmentation fault of `move_group`
   in `rclcpp::Executor::~Executor()`. This happens in the MoveIt 2.12.4 binary while it shuts down,
   after all planning has stopped. It does not come from this configuration and has no effect.
+- **Multi-point paths**: Pilz sequences (`/sequence_move_group`) respect the Cartesian limits and can
+  blend corners; `/compute_cartesian_path` only respects joint limits and ignores
+  `max_cartesian_speed` (section 9, "Multi-point paths").
 - **pick_ik `global` mode** can jump to a different IK branch when you drag the marker (e.g.
   flip the wrist). Increase `minimal_displacement_weight` in `kinematics.yaml` if this is annoying.
 - **Changing the URDF**: after changing link names, joint names or limits, update the SRDF,
@@ -736,6 +739,37 @@ the collision matrix (identical); the URDF (`… → Stage6_1 → flange → tcp
 re-run: `colcon build` of the whole workspace (9 packages, OK), `colcon test --packages-select
 robotarm_motion` (flake8 + pep257, 2/2 passed), and a clean shutdown of `launch_robot.py` on Ctrl-C
 (apart from the known move_group segfault).
+
+### Multi-point paths (2026-10-04)
+
+Path: a 5 cm square in the y-z plane of `Base_1`, starting at the TCP of `ready`, with constant
+tool orientation, scaling 0.5. Each method ran on the standalone demo and on the firmware mock
+inside a control_center mission; the results were the same. The values are measured on the
+**executed** path: `/joint_states` recorded during execution, resampled at 100 Hz, FK via
+`/compute_fk`.
+
+| Method | Result | Motion time | Peak TCP speed | Corners | Max deviation from square |
+|---|---|---|---|---|---|
+| Pilz sequence (`/sequence_move_group`), 4 × LIN, `blend_radius` 0 | SUCCESS | 5.60 s | 53 mm/s | **stops** at every corner (< 1.1 mm/s) | 0.14 mm |
+| Pilz sequence, 4 × LIN, `blend_radius` 10 mm | SUCCESS | 4.50 s | 58 mm/s | **passes** at 20–28 mm/s, rounded (closest 0.9–1.9 mm) | 1.36 mm in the blend zones, ≤ 0.22 mm elsewhere |
+| `/compute_cartesian_path` (2 mm steps) + `/execute_trajectory` | SUCCESS, fraction 1.0 | 3.68 s | 112 mm/s | passes at 12–14 mm/s (corner cut 0.35–0.43 mm) | 0.29 mm |
+| same with `max_cartesian_speed` 30 mm/s | SUCCESS, fraction 1.0 | 3.70 s | 111 mm/s | same | 0.27 mm |
+
+In all runs the orientation stayed within 0.02°, the arm ended < 0.1 mm from the start corner,
+and joint velocities stayed ≤ 94 % of scaling × `joint_limits.yaml`.
+
+What this shows:
+- **Pilz sequences** follow the Cartesian limits (`pilz_cartesian_limits.yaml`, 0.1 m/s × scaling
+  = 50 mm/s). The measured peaks are 5–16 % above that, the most in the blend zones.
+  `blend_radius` > 0 turns the corners into smooth arcs without stopping; 0 stops at each point.
+- **Blending rules**: the last item must have `blend_radius` 0. Blend spheres of consecutive points
+  must not overlap (4 × 50 mm segments with 40 mm radius → `INVALID_MOTION_PLAN`). Mixed PTP → LIN
+  blending is accepted.
+- **`/compute_cartesian_path`** is timed only by the joint limits (TOTG), so the TCP gets about 2×
+  faster than with Pilz. The corners are slightly rounded in joint space (no stop). The request field
+  `max_cartesian_speed` is **ignored** by the move_group service in MoveIt 2.12.4 (no effect measured;
+  the capability library does not use the Cartesian speed limiter). Limit the speed with
+  `max_velocity_scaling_factor` instead.
 
 ### Not verified here
 
