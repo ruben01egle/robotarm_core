@@ -22,11 +22,14 @@ RUN apt-get update && apt-get install -y \
 
 # MoveIt 2 (move_group, planners, Setup Assistant, RViz plugin), the pick_ik IK solver and
 # ros2_controllers (joint_trajectory_controller, joint_state_broadcaster, kinematics_interface)
-# for src/robotarm_moveit_config and robotarm_rbd
+# for src/robotarm_moveit_config and robotarm_rbd; pinocchio (robotarm_rbd tests) and
+# joint_state_publisher_gui (robotarm_description display_test.launch.py)
 RUN apt-get update && apt-get install -y \
     ros-${ROS_DISTRO}-moveit \
     ros-${ROS_DISTRO}-pick-ik \
     ros-${ROS_DISTRO}-ros2-controllers \
+    ros-${ROS_DISTRO}-pinocchio \
+    ros-${ROS_DISTRO}-joint-state-publisher-gui \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
