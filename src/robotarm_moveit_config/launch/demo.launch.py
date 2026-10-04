@@ -28,7 +28,7 @@ from moveit_configs_utils import MoveItConfigsBuilder
 def generate_launch_description():
     moveit_config = (
         MoveItConfigsBuilder('robotarm', package_name='robotarm_moveit_config')
-        .robot_description(mappings={'use_hardware': 'false'})
+        .robot_description(mappings={'use_hardware': 'false', 'tool': 'none'})
         .to_moveit_configs()
     )
     package_path = Path(moveit_config.package_path)

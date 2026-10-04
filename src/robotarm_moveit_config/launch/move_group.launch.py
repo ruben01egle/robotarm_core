@@ -31,7 +31,9 @@ def generate_launch_description():
         MoveItConfigsBuilder('robotarm', package_name='robotarm_moveit_config')
         # use_hardware only selects the ros2_control plugin in the URDF; move_group ignores the
         # ros2_control block, so the mock variant is fine here, also for the real robot.
-        .robot_description(mappings={'use_hardware': 'false'})
+        # tool: file in robotarm_description/urdf/tools/ that is mounted on the flange and defines
+        # the tcp link ("none" = tcp on the flange). Must match the tool used on the RT PC.
+        .robot_description(mappings={'use_hardware': 'false', 'tool': 'none'})
         # moveit_manage_controllers=False: MoveIt never switches ros2_control controllers,
         # control_center does (mission request).
         .trajectory_execution(
