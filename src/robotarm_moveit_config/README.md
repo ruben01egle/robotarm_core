@@ -43,14 +43,14 @@ flowchart LR
         CC["control_center<br/>(state machine)"]
         MG["move_group<br/>(robotarm_moveit_config)"]
         RVIZ["RViz<br/>MotionPlanning panel"]
-        CLIENT["mission node / script<br/>(e.g. scripts/demo_motions.py)"]
+        CLIENT["MoveIt client<br/>(robotarm_motion)"]
     end
 
     subgraph RT["RT PC (robotarm_firmware_lnx)"]
         CM["controller_manager<br/>(ros2_control, 500 Hz)"]
         JSB["joint_state_broadcaster"]
         TELEOP["teleop_controller<br/>(Ruckig)"]
-        JTC["joint_trajectory_controller<br/>(to be added, see section 7)"]
+        JTC["joint_trajectory_controller<br/>(spawned inactive)"]
         HW["moteus hardware interface<br/>(moteus_hardware_system)"]
         RSP["robot_state_publisher"]
     end
@@ -79,10 +79,11 @@ Responsibilities:
 | `move_group` (this package) | high-level PC | planning; sends trajectories to `joint_trajectory_controller` **while it is active** |
 | `gui` | high-level PC | operator UI, manual jogging via `teleop_controller` |
 
-Typical flow for a MoveIt motion on the real robot (after the changes in section 7): the client
-asks `control_center` for a mission with `controller_names = "joint_trajectory_controller"`,
-control_center activates that controller, the client sends goals to `move_group`, and at the end it
-stops the mission (controller is deactivated again).
+Typical flow for a MoveIt motion on the real robot: the client asks `control_center` for a
+mission with `controller_names = "joint_trajectory_controller"`, control_center activates that
+controller, the client sends goals to `move_group`, and at the end it stops the mission (the
+controller is deactivated again). [`robotarm_motion`](../robotarm_motion/README.md) implements this
+handshake (`ControlCenterMission`), including what happens on STOP.
 
 For development without the robot, `launch/demo.launch.py` starts everything from the RT PC column
 (except the moteus hardware) locally with mock hardware.
@@ -94,7 +95,7 @@ For development without the robot, `launch/demo.launch.py` starts everything fro
 ```
 robotarm_moveit_config/
 ├── .setup_assistant              where the URDF and SRDF are (read by Setup Assistant and MoveItConfigsBuilder)
-├── CMakeLists.txt                installs config/, launch/, .setup_assistant, scripts/demo_motions.py
+├── CMakeLists.txt                installs config/, launch/, .setup_assistant
 ├── package.xml                   all runtime dependencies (rosdep)
 ├── README.md                     this file
 ├── config/
@@ -111,14 +112,15 @@ robotarm_moveit_config/
 │   ├── demo.launch.py            standalone demo with mock hardware
 │   ├── move_group.launch.py      move_group (+ RViz) only, for the real robot
 │   └── setup_assistant.launch.py opens this package in the Setup Assistant
-└── scripts/
-    └── demo_motions.py           test script: OMPL, Pilz PTP, Pilz LIN
 ```
+
+The test script `demo_motions` and the Python MoveIt client are in the package
+[`robotarm_motion`](../robotarm_motion/README.md); this package contains configuration only.
 
 ### `.setup_assistant`
 
 A small YAML file. It says which URDF the config belongs to (`robotarm_description`,
-`urdf/robotarm.urdf.xacro`, xacro argument `use_hardware:=false`) and where the SRDF is.
+`urdf/robotarm.urdf.xacro`, xacro arguments `use_hardware:=false tool:=none`) and where the SRDF is.
 `MoveItConfigsBuilder` reads it to find the URDF, so no URDF copy exists in this package.
 *Adjust:* only if the URDF moves or needs other xacro arguments.
 
@@ -128,6 +130,8 @@ The **Semantic Robot Description Format** adds to the URDF what MoveIt needs bey
 
 - **Planning group `arm`**: chain `Base_1 → tcp`, i.e. joints `axis1..axis6`. The tip link of the
   chain (`tcp`) is the link that is moved to pose goals and that carries the interactive marker in RViz.
+  In the URDF the chain ends `Stage6_1 → flange → tcp`; the tool selected with the xacro argument
+  `tool` (default `none` = tcp on the flange) defines where `tcp` is.
 - **Named states** (`group_state`), usable by name from RViz ("Goal State" dropdown) and code:
   - `home`: all joints 0. The arm is stretched horizontally forward, TCP at about x = 0.73 m,
     z = 0.37 m, at the edge of the workspace (fully stretched = singular).
@@ -164,8 +168,8 @@ Pilz. Position limits come from the URDF.
 
 `default_velocity_scaling_factor` / `default_acceleration_scaling_factor` = 0.1: requests that do
 not specify a scaling (e.g. RViz with sliders left at the default) run at 10 % of these limits.
-*Adjust:* after measuring on hardware. The velocity may not exceed the URDF `velocity` (currently the
-placeholder 1.0), otherwise Pilz does not start.
+*Adjust:* after measuring on hardware. The velocity may not exceed the URDF `velocity` (currently
+2.5–3.14 rad/s), otherwise Pilz does not start.
 
 ### `config/pilz_cartesian_limits.yaml` — PRELIMINARY
 
@@ -213,7 +217,8 @@ Standalone demo: `robot_state_publisher`, `ros2_control_node` with **mock hardwa
 ### `launch/move_group.launch.py`
 
 Only `move_group` (+ RViz, `rviz:=true|false`, default `true`). Starts **no** controller_manager and
-**no** robot_state_publisher; use it against the real ros2_control stack. Here all MoveIt
+**no** robot_state_publisher; use it against the real ros2_control stack. `robot_bringup`'s
+`launch_robot.py` includes it (argument `moveit:=true`, the default). Here all MoveIt
 parameters are assembled with `MoveItConfigsBuilder`, including `moveit_manage_controllers=False`
 and the two planning pipelines (default: OMPL).
 
@@ -221,19 +226,6 @@ and the two planning pipelines (default: OMPL).
 
 Opens the *installed* copy of this package in the Setup Assistant (standard file generated by the
 Setup Assistant). To edit the package, open the source directory instead (section 5).
-
-### `scripts/demo_motions.py`
-
-Test script for the demo, using only `rclpy` + `moveit_msgs` (MoveGroup action `/move_action`,
-FK service `/compute_fk`):
-
-- (a) OMPL: plan + execute to `ready`
-- (b) Pilz PTP: plan + execute to `home`
-- (c) Pilz LIN: +5 cm in z from `ready`, plan only (or `--execute-lin`)
-
-For every motion it checks the result code, that no joint exceeds scaling × `joint_limits.yaml`, that
-the goal was reached (`/joint_states`), and for LIN that the TCP path is a straight line of the
-requested length. Options: `--scaling` (default 0.5), `--execute-lin`, `--dz`.
 
 ---
 
@@ -263,7 +255,8 @@ Both are loaded in one `move_group`; each request chooses one with `pipeline_id`
 
 ### Conservative limits
 
-The URDF contains placeholder limits and no acceleration limits. The limits here are well below
+The URDF has no acceleration limits (and its velocity limits of 2.5–3.14 rad/s are the motor
+limits, not tested motion limits). The limits here are well below
 what the TeleopController uses (3 rad/s, 4 rad/s²), and the default scaling is 10 %. MoveIt
 trajectories can be long, fast, and far from where the operator expects, so the first tests on
 hardware should be slow. Raise the values step by step after measuring.
@@ -285,12 +278,12 @@ Therefore:
 
 ### Own demo mock instead of the firmware mock
 
-`robotarm_firmware_lnx` also has a mock setup, but it currently has no
-`joint_trajectory_controller` (section 7), it lives in another repository, and its controller setup
-is made for teleop. The demo here uses the same URDF with `use_hardware:=false` and a minimal,
-self-contained `ros2_controllers.yaml`. You can test MoveIt with only this repository.
-Once the firmware has a `joint_trajectory_controller`, `move_group.launch.py` can be used against its
-mock in exactly the same way as against the real robot.
+`robotarm_firmware_lnx` also has a mock setup (`robotarm_mock.launch.py`), and since it got a
+`joint_trajectory_controller` it is the most realistic test: same controller configuration as the
+real robot, hardware starts inactive, and the controller has to be activated by control_center
+(section 4, "Full system"). The demo here is still useful because it needs only this repository and
+nothing else: the controller is always active, and no control_center or arming is needed. It is
+meant for trying out MoveIt itself (planners, limits, RViz).
 
 ---
 
@@ -330,7 +323,7 @@ Wait for `You can start planning now!` in the output. Quick checks in a second t
 ```bash
 ros2 control list_controllers      # both controllers "active"
 ros2 topic hz /joint_states        # ~500 Hz
-ros2 run robotarm_moveit_config demo_motions.py   # runs the test motions (a)-(c)
+ros2 run robotarm_motion demo_motions   # runs the test motions (a)-(c), see robotarm_motion
 ```
 
 ### Plan and execute in RViz
@@ -352,6 +345,57 @@ Try other planners in the **Context** tab (top part of the panel):
   centimetres from the current TCP pose. With `LIN` the TCP then moves on a straight line.
   (`CIRC` needs an extra path constraint, which cannot be set in the panel.)
 
+### Full system: firmware mock (or the real robot)
+
+This is the setup used on the real robot: RT side from `robotarm_firmware_lnx`, control_center and
+MoveIt from this repository. With the firmware mock, everything runs on one machine. **Do not start
+`demo.launch.py` at the same time.**
+
+Terminal 1, RT side (firmware workspace, branch with `joint_trajectory_controller`):
+
+```bash
+cd <robotarm_firmware_lnx> && source install/setup.bash
+ros2 launch robotarm_bringup robotarm_mock.launch.py     # real robot: robotarm_hardware.launch.py
+```
+
+Terminal 2, high-level side (this workspace):
+
+```bash
+source install/setup.bash
+ros2 launch robot_bringup launch_robot.py                 # control_center + move_group + RViz + GUI
+#   options: moveit:=false  rviz:=false  gui:=false
+```
+
+control_center reaches `CONNECTED` when it sees the controller_manager. Then:
+
+```bash
+# arm (the GUI does this with its ARM button)
+ros2 service call /request_action robotarm_interface/srv/RequestAction \
+  "{node_name: operator, action_id: 1, request_type: 254}"
+# run MoveIt motions inside a mission (activates joint_trajectory_controller)
+ros2 run robotarm_motion demo_motions --mission --scaling 0.1
+# STOP (e.g. during a motion), and leave STOP again
+ros2 service call /request_action robotarm_interface/srv/RequestAction \
+  "{node_name: operator, action_id: 11, request_type: 254}"
+ros2 service call /request_action robotarm_interface/srv/RequestAction \
+  "{node_name: operator, action_id: 11, request_type: 255}"
+```
+
+(`action_id`: 1 = ARM, 2 = MISSION, 11 = STOP, 12 = EMERGENCY; `request_type`: 254 = start,
+255 = stop, see `robotarm_interface/srv/RequestAction.srv`.)
+
+Planning in RViz works without a mission; **Execute** fails (`CONTROL_FAILED`, nothing moves)
+unless a mission with `joint_trajectory_controller` is active. To execute from RViz, start the
+mission by hand first:
+
+```bash
+ros2 service call /request_action robotarm_interface/srv/RequestAction \
+  "{node_name: rviz_user, action_id: 2, request_type: 254, controller_names: joint_trajectory_controller}"
+# ... plan & execute in RViz ...
+ros2 service call /request_action robotarm_interface/srv/RequestAction \
+  "{node_name: rviz_user, action_id: 2, request_type: 255, controller_names: joint_trajectory_controller}"
+```
+
 ---
 
 ## 5. Collision matrix and Setup Assistant
@@ -366,7 +410,7 @@ cd /robotarm_core
 colcon build --packages-up-to robotarm_moveit_config && source install/setup.bash
 ros2 run moveit_setup_assistant collisions_updater \
   --urdf $(ros2 pkg prefix robotarm_description)/share/robotarm_description/urdf/robotarm.urdf.xacro \
-  --xacro-args use_hardware:=false \
+  --xacro-args "use_hardware:=false tool:=none" \
   --srdf src/robotarm_moveit_config/config/robotarm.srdf \
   --output src/robotarm_moveit_config/config/robotarm.srdf \
   --default --trials 100000
@@ -452,68 +496,74 @@ Reference implementations: `kdl_kinematics_plugin` (moveit_kinematics) and pick_
 
 ## 7. Open issues / required changes outside this package
 
-These things were noticed while writing this package. **None of them were changed**, because they are
-outside this package.
+### Done (2026-10-04)
 
-### Needed for MoveIt on the real robot
+1. **`joint_trajectory_controller` in `robotarm_firmware_lnx`**: branch
+   `feature/joint-trajectory-controller` of the firmware repository (committed, **not pushed** yet):
+   - `controllers.yaml`: `joint_trajectory_controller`, joints `axis1..axis6`, command `position`
+     + `velocity`, state `position` + `velocity`, tracking tolerances (`constraints`, PRELIMINARY:
+     0.1 rad while moving, 0.01 rad at the goal, 0.5 s goal time),
+   - spawned `--inactive` in `robotarm_mock.launch.py` and `robotarm_hardware.launch.py`,
+   - `exec_depend` in `robotarm_bringup/package.xml`, README updated.
+2. **Activation through `control_center`**: [`robotarm_motion`](../robotarm_motion/README.md)
+   (`ControlCenterMission`) starts/stops the mission and cancels the MoveIt goal when control_center
+   goes to STOP/ERROR/EMERGENCY. control_center allows only one mission at a time, so teleop and the
+   trajectory controller (same command interfaces) are never active together. Verified with the
+   firmware mock (section 9).
+3. **`teleop_controller` covers `axis1..axis6`** (firmware branch, `controllers.yaml`).
+4. **URDF limits**: `robotarm_description` `8ab90ac` (pinned here and in the firmware) has real
+   velocity (2.5–3.14 rad/s) and effort limits. Acceleration limits exist only in `joint_limits.yaml`.
+5. **Dockerfile** installs `moveit`, `pick-ik`, `ros2-controllers`, `pinocchio` (robotarm_rbd
+   tests) and `joint-state-publisher-gui`.
+6. **Workspace build**: the `robotarm_rbd` test typo is fixed upstream (`8ab90ac`); a plain
+   `colcon build` of the whole workspace succeeds (with `pinocchio` installed).
+7. **`robot_bringup/launch/launch_robot.py`** starts `move_group.launch.py` (`moveit:=true`, default),
+   with `rviz:=` and `gui:=` arguments.
 
-1. **`joint_trajectory_controller` in `robotarm_firmware_lnx`** (repository not available here,
-   based on the task description): the RT PC only runs the custom `teleop_controller`. Without a
-   `joint_trajectory_controller`, MoveIt cannot execute anything on the real robot. Required:
-   - in `controllers.yaml`: controller `joint_trajectory_controller`
-     (`joint_trajectory_controller/JointTrajectoryController`), joints `axis1..axis6`,
-     command interfaces `position, velocity`, state interfaces `position, velocity`
-     (same as `config/ros2_controllers.yaml` here),
-   - in **both** launch files (real hardware and mock): spawn it **inactive**
-     (`spawner joint_trajectory_controller --inactive`).
-2. **Activation through `control_center`**: a MoveIt client (mission node) sends
-   `RequestAction(ACTION_MISSION, TYPE_START, controller_names="joint_trajectory_controller")`
-   before and `TYPE_STOP` after the MoveIt motions. `control_center` supports this already. Open points:
-   - Nothing in the GUI or elsewhere starts such a mission yet. A mission node or a GUI button is needed.
-   - `teleop_controller` and `joint_trajectory_controller` claim the same command interfaces.
-     `on_enter_mission_before` activates with `STRICT` and deactivates nothing, so teleop has to be
-     stopped first, otherwise the switch fails.
-   - A running MoveIt execution is not cancelled when control_center deactivates the controller. The
-     JTC aborts the goal, and MoveIt reports `CONTROL_FAILED`. That is acceptable, but should be tested.
-3. **`teleop_controller` lists only `axis1–3` in `controllers.yaml`** (firmware repo, per the task
-   description). With 6 axes, axis4..6 cannot be jogged.
-4. **Placeholder limits in the URDF** (`robotarm_description/urdf/robotarm_geometry.xacro`): all joints
-   have `velocity="1" effort="1"`. MoveIt only uses the velocity (as an upper bound for
-   `joint_limits.yaml`), but `robotarm_rbd`, the GUI (reads limits from the URDF) and possibly the
-   hardware interface use them too. Real values are needed; acceleration limits cannot be expressed
-   in URDF and stay in `joint_limits.yaml`.
-5. ~~**Dockerfile** does not install MoveIt, pick_ik or ros2_controllers.~~ Done: `.devcontainer/Dockerfile`
-   now installs `ros-${ROS_DISTRO}-moveit`, `-pick-ik` and `-ros2-controllers`.
+### Still open
+
+1. **First run on the real robot** (not possible here). Suggested order:
+   - mock first (section 4, "Full system"), then hardware with `--scaling 0.1` and the e-stop in hand,
+   - check that the trajectory tolerances in the firmware `controllers.yaml` trigger (e.g. block a
+     joint gently at low speed); the mock follows perfectly, so they were never triggered here,
+   - compare `/joint_states` with the planned trajectory, then raise `joint_limits.yaml` step by step.
+2. **Push the firmware branch** `feature/joint-trajectory-controller` and merge it.
+3. **GUI**: there is no button to start a MoveIt mission or to execute from RViz with a mission
+   (deferred on purpose; manual service calls in section 4 work meanwhile). The unused
+   `Mission.action` in robotarm_interface could become the interface of a MoveIt mission server.
+4. **Planned link renaming**: `robotarm_description/ORT.yaml` maps `Base_1 → base` and
+   `Stage*_1 → stage1..6` for the next CAD export. After that export, update the SRDF (chain base
+   link, named states stay), regenerate the collision matrix, and change the fixed frame in
+   `moveit.rviz` and `BASE_FRAME` in `robotarm_motion/moveit_client.py`.
+5. **Tool selection**: both sides use `tool:=none`. With a real tool, set the same `tool` on the
+   RT PC (firmware launch files) and in `move_group.launch.py` / `.setup_assistant`, and regenerate
+   the collision matrix.
+6. **`/joint_states` rate on the RT PC is 50 Hz** (`joint_state_broadcaster.publish_rate`), the demo
+   uses 500 Hz. Fine for MoveIt; control_center's watchdog triggers after 0.5 s without a message.
 
 ### Other findings
 
-6. **robotarm_interface**:
+1. **robotarm_interface**:
    - `CMakeLists.txt` only generates `RequestAction.srv`, `SystemStatus.msg` and `SetFloat64.srv`.
-     The messages `AxisData`, `MotorParameter`, `TrajectoryFrame`, the service `CANFDTunnel` and all
-     actions (`Mission`, `PlanCSV`, `PlanJointSpace`, `ConfigMotor`, `ReadMotorConfigs`) are not
-     built. Actions would also need `action_msgs` as a dependency.
+    The messages `AxisData`, `MotorParameter`, `TrajectoryFrame`, the service `CANFDTunnel` and all
+    actions (`Mission`, `PlanCSV`, `PlanJointSpace`, `ConfigMotor`, `ReadMotorConfigs`) are not
+    built. Actions would also need `action_msgs` as a dependency.
    - `PlanJointSpace.action` uses a type `JointAngles` that does not exist.
-7. **Wrong/missing dependencies in package.xml files** (`rosdep install` fails for the whole workspace):
+2. **Wrong/missing dependencies in package.xml files** (`rosdep install` fails for the whole workspace):
    - `gui/package.xml` depends on `interface`; the package is called `robotarm_interface`.
    - `robot_bringup/package.xml` depends on `interface`, `mission_controller`, `udp_agent`,
-     `hardware_simulation`, which do not exist in this repository.
+    `hardware_simulation`, which do not exist in this repository.
    - `control_center/package.xml` lacks `rclpy`, `sensor_msgs`, `lifecycle_msgs`,
-     `python3-transitions`. `gui` has similar gaps.
-8. **GUI speed service name**: `manual_control_widget.py` creates a client for
+    `python3-transitions`. `gui` has similar gaps.
+3. **GUI speed service name**: `manual_control_widget.py` creates a client for
    `/teleop_controller/scale_speed` but the warning mentions `/teleop_controller/set_speed`. One of
    the two is wrong (depends on the firmware).
-9. **`rviz.launch.py`**: exists in `robotarm_description/launch/` and is included by
+4. **`rviz.launch.py`**: exists in `robotarm_description/launch/` and is included by
    `robot_bringup/launch/launch_robot.py`. It was reported as missing, but it is present in this
    repository. If a launch file in the firmware repo refers to it, check the path there.
-10. **KDL warning about root inertia**: `robot_state_publisher` warns
-    `The root link Base_1 has an inertia specified in the URDF, but KDL does not support a root link with an inertia`.
-    Harmless for MoveIt; it goes away if the inertia of `Base_1` is removed or a dummy root link is added.
-11. **Workspace build fails in `robotarm_rbd` tests**: a plain `colcon build` of the whole workspace
-    builds all other packages. `robotarm_rbd` fails because
-    `robotarm_rbd/test/robotarm_rbd_test.cpp` uses `intertia_` (twice) instead of the member
-    `inertia_`. The library itself builds (`--cmake-args -DBUILD_TESTING=OFF`). This does not affect
-    `colcon build --packages-up-to robotarm_moveit_config`. `robotarm_rbd` also needs
-    `kinematics_interface`, which comes with `ros-jazzy-ros2-controllers`.
+5. **KDL warning about root inertia**: `robot_state_publisher` warns
+   `The root link Base_1 has an inertia specified in the URDF, but KDL does not support a root link with an inertia`.
+   Harmless for MoveIt; it goes away if the inertia of `Base_1` is removed or a dummy root link is added.
 
 ---
 
@@ -532,7 +582,7 @@ outside this package.
 - **Log messages at startup** that are expected and harmless:
   - `[occupancy_map_monitor]: No 3D sensor plugin(s) defined for octomap updates` (ERROR) and
     `Resolution not specified for Octomap` (WARN). There are no depth sensors configured.
-  - The KDL root-inertia warning (section 7, item 10).
+  - The KDL root-inertia warning (section 7, "Other findings", item 5).
 - **Collision matrix "Never" is statistical** (100 000 samples); see section 5.
 - **Default scaling is 10 %.** RViz motions are slow on purpose; raise the sliders in the panel.
 - **Pilz LIN near singularities / workspace boundary**: LIN through or near `axis5 = 0` (wrist
@@ -549,15 +599,23 @@ outside this package.
   collision matrix.
 - **`use_hardware` in `move_group.launch.py`**: the URDF is loaded with `use_hardware:=false`. This
   only changes the ros2_control plugin tag, which move_group ignores, so it is correct for the
-  real robot too.
+  real robot too. `tool:=none` is different: it moves the `tcp`, so it must match the tool on the
+  RT PC (its launch files do not pass `tool`, i.e. also `none`).
+- **RViz Execute on the real robot needs a mission** (section 4, "Full system"). Without one, the
+  goal is rejected by the inactive controller and nothing moves.
 
 ---
 
 ## 9. Verification log
 
-Initial verification when the package was created (2026-09-29). Environment: devcontainer, ROS 2 Jazzy,
-MoveIt 2.12.4, pick_ik, ros2_controllers from apt, `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`,
-`robotarm_description` at commit `1265c65`.
+Environment: devcontainer, ROS 2 Jazzy, MoveIt 2.12.4, pick_ik, ros2_controllers from apt,
+`RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`.
+
+The first part is the initial verification when the package was created (2026-09-29,
+`robotarm_description` `1265c65`; the test script was still `scripts/demo_motions.py` in this
+package, now `ros2 run robotarm_motion demo_motions`). The last part,
+["Integration test with the firmware mock"](#integration-test-with-the-firmware-mock-2026-10-04),
+is the end-to-end test.
 
 ### Build
 
@@ -596,8 +654,8 @@ ros2 topic hz /joint_states
 ### Test motions
 
 ```bash
-ros2 run robotarm_moveit_config demo_motions.py                # (a), (b), (c) plan only
-ros2 run robotarm_moveit_config demo_motions.py --execute-lin  # (c) also executed
+ros2 run robotarm_motion demo_motions                # (a), (b), (c) plan only
+ros2 run robotarm_motion demo_motions --execute-lin  # (c) also executed
 ```
 
 Scaling 0.5 (velocity and acceleration):
@@ -647,9 +705,41 @@ was not tested.
 `collisions_updater ... --default --trials 100000` (command in section 5): 6 `Adjacent` + 4 `Never`
 pairs; no pair collides in the zero pose.
 
+### Integration test with the firmware mock (2026-10-04)
+
+Setup:
+- `robotarm_description` `8ab90ac` in both repositories,
+- `robotarm_firmware_lnx` branch `feature/joint-trajectory-controller`, built in
+  `/ros2_ws/robotarm_firmware_lnx`,
+- this repository with `robotarm_motion` and the updated `robot_bringup`.
+
+```bash
+# firmware workspace
+ros2 launch robotarm_bringup robotarm_mock.launch.py
+# this workspace
+ros2 launch robot_bringup launch_robot.py gui:=false rviz:=false
+ros2 run robotarm_motion demo_motions --mission ...
+```
+
+| # | Test | Result |
+|---|---|---|
+| 0 | Startup | Firmware: hardware `inactive`; `joint_trajectory_controller` and `teleop_controller` `inactive`. control_center: `CONNECTED`. move_group: `You can start planning now!` |
+| 1 | `demo_motions --mission` while only CONNECTED | refused: `control_center is CONNECTED, arm the robot first`; no controller activated |
+| 2 | `demo_motions --mission --arm --execute-lin` | armed → mission started (JTC active) → (a) OMPL, (b) PTP, (c) PTP + LIN + PTP all SUCCESS, same durations as in the demo; LIN 5.00 cm, 0.068 mm deviation → mission stopped (JTC inactive), control_center `ARMED` |
+| 3 | STOP during (a) at scaling 0.1 (`RequestAction` INVOKE_STOP after ~9 s) | control_center `STOP`, JTC deactivated; JTC log `Current goal cancelled during deactivate transition`, MoveIt `ABORTED`; client: `MissionAborted: control_center switched to STOP`; joints frozen mid-motion (identical `/joint_states` 2 s and 5 s after the STOP) |
+| 4 | `exit_stop`, then teleop mission (`controller_names: teleop_controller`) | `ARMED` → teleop active, JTC inactive; a 6-value command on `/teleop_controller/commands` moves all 6 axes; mission stop → `ARMED` |
+| 5 | new `demo_motions --mission` from the teleop pose | all checks passed |
+| 6 | `launch_robot.py` arguments | `moveit:=false rviz:=false` → control_center only; `moveit:=false rviz:=true` → + plain RViz; `moveit:=true rviz:=false` → + move_group |
+
+Also re-run with `8ab90ac`: the standalone demo (`demo_motions --execute-lin`, all checks passed);
+the collision matrix (identical); the URDF (`… → Stage6_1 → flange → tcp`, all meshes resolve). Also
+re-run: `colcon build` of the whole workspace (9 packages, OK), `colcon test --packages-select
+robotarm_motion` (flake8 + pep257, 2/2 passed), and a clean shutdown of `launch_robot.py` on Ctrl-C
+(apart from the known move_group segfault).
+
 ### Not verified here
 
-- Operation against `robotarm_firmware_lnx` (repository not available; no `joint_trajectory_controller` there yet).
-
-A full `colcon build` of the workspace was also run: all packages except `robotarm_rbd` build
-(section 7, item 11).
+- The real robot (section 7, "Still open", item 1).
+- The trajectory tolerances of the firmware's `joint_trajectory_controller` (the mock never deviates).
+- The Docker image build (no Docker inside the devcontainer); the same apt packages were installed
+  in the running container.
