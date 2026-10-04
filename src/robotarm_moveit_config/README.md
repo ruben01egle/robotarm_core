@@ -306,8 +306,8 @@ rosdep update
 rosdep install --from-paths src/robotarm_moveit_config --ignore-src -y
 ```
 
-(In the devcontainer you are root, so `sudo` is not needed. The Dockerfile does not install these
-packages yet; see section 7.)
+(The devcontainer Dockerfile already installs these packages; the commands are only needed in an
+older container or outside the devcontainer. In the devcontainer you are root, so `sudo` is not needed.)
 
 ### Build
 
@@ -482,9 +482,8 @@ outside this package.
    `joint_limits.yaml`), but `robotarm_rbd`, the GUI (reads limits from the URDF) and possibly the
    hardware interface use them too. Real values are needed; acceleration limits cannot be expressed
    in URDF and stay in `joint_limits.yaml`.
-5. **Dockerfile** (`.devcontainer/Dockerfile`) does not install MoveIt, pick_ik or ros2_controllers.
-   After a container rebuild they are gone. Add
-   `ros-${ROS_DISTRO}-moveit ros-${ROS_DISTRO}-pick-ik ros-${ROS_DISTRO}-ros2-controllers`.
+5. ~~**Dockerfile** does not install MoveIt, pick_ik or ros2_controllers.~~ Done: `.devcontainer/Dockerfile`
+   now installs `ros-${ROS_DISTRO}-moveit`, `-pick-ik` and `-ros2-controllers`.
 
 ### Other findings
 
