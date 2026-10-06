@@ -1,15 +1,20 @@
 {
-    "python.autoComplete.extraPaths": [
-        "${workspaceFolder}/install/robotarm_interface/lib/python3.12/site-packages",
-        "${workspaceFolder}/src/utility",
-        "/opt/ros/jazzy/lib/python3.10/site-packages",
-        "/opt/ros/jazzy/local/lib/python3.10/dist-packages"
-    ],
     "python.analysis.extraPaths": [
         "${workspaceFolder}/install/robotarm_interface/lib/python3.12/site-packages",
         "${workspaceFolder}/src/utility",
-        "/opt/ros/jazzy/lib/python3.10/site-packages",
-        "/opt/ros/jazzy/local/lib/python3.10/dist-packages"
+        "/opt/ros/jazzy/lib/python3.12/site-packages"
     ],
-    "cmake.sourceDirectory": "/robotarm_core/src/udp_agent"
+    "cmake.sourceDirectory": "/robotarm_core/src/robotarm_interface",
+    "python.autoComplete.extraPaths": [
+        "/robotarm_core/build/robot_bringup",
+        "/robotarm_core/install/robot_bringup/lib/python3.12/site-packages",
+        "/robotarm_core/build/gui",
+        "/robotarm_core/install/gui/lib/python3.12/site-packages",
+        "/robotarm_core/build/control_center",
+        "/robotarm_core/install/control_center/lib/python3.12/site-packages",
+        "/robotarm_core/build/utility",
+        "/robotarm_core/install/utility/lib/python3.12/site-packages",
+        "/robotarm_core/install/robotarm_interface/lib/python3.12/site-packages",
+        "/opt/ros/jazzy/lib/python3.12/site-packages"
+    ]
 }

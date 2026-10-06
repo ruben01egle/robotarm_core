@@ -6,6 +6,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from sensor_msgs.msg import JointState
 
 from controller_manager_msgs.srv import ListHardwareInterfaces
+from controller_manager_msgs.srv import ListControllers
 from controller_manager_msgs.srv import SwitchController
 from controller_manager_msgs.srv import SwitchController_Request as SwitchReq
 from controller_manager_msgs.srv import SetHardwareComponentState
@@ -77,6 +78,7 @@ class ControlCenterNode(Node):
             {'trigger': 'exit_arm',           'source': SystemState.ARMED,     'dest': SystemState.CONNECTED,   'after': 'on_exit_arm_after'},
             {'trigger': 'enter_mission',      'source': SystemState.ARMED,     'dest': SystemState.MISSION,     'before': 'on_enter_mission_before'},
             {'trigger': 'exit_mission',       'source': SystemState.MISSION,   'dest': SystemState.ARMED,       'before': 'on_exit_mission_before'},
+            {'trigger': 'controller_lost',    'source': SystemState.MISSION,   'dest': SystemState.ARMED,       'before': 'on_controller_lost_before'},
 
             # --- STOPS & Recovery ---
             {'trigger': 'enter_stop',         'source': SystemState.MISSION,   'dest': SystemState.STOP},
@@ -104,8 +106,13 @@ class ControlCenterNode(Node):
             callback_group=self.multithread_cb_group
         )
         self.hw_state_client = self.create_client(
-            SetHardwareComponentState, 
-            '/controller_manager/set_hardware_component_state', 
+            SetHardwareComponentState,
+            '/controller_manager/set_hardware_component_state',
+            callback_group=self.multithread_cb_group
+        )
+        self.list_ctrl_client = self.create_client(
+            ListControllers,
+            '/controller_manager/list_controllers',
             callback_group=self.multithread_cb_group
         )
 
@@ -133,6 +140,16 @@ class ControlCenterNode(Node):
 
         self.active_controller = None
         self.active_node = None
+
+        # Controller-Überwachung: erkennt, wenn der controller_manager den Mission-Controller
+        # selbstständig deaktiviert (z.B. durch einen Fehler im Controller)
+        self.switching_controller = False
+        self.controller_check_pending = False
+        self.controller_monitor_timer = self.create_timer(
+            0.2,
+            self.controller_monitor_cb,
+            callback_group=self.multithread_cb_group
+        )
 
         self.status_pub = self.create_publisher(
             SystemStatus,
@@ -234,17 +251,21 @@ class ControlCenterNode(Node):
         request.strictness = SwitchReq.STRICT
         request.activate_asap = True
 
-        rate = self.create_rate(10)
-        future = self.switch_ctrl_client.call_async(request)
-        while not future.done(): 
-            rate.sleep()
-            
-        response = future.result()
-        if response is None or not response.ok:
-            raise RuntimeError(f"Failed to activate controller: {controller_name}")
-            
-        self.active_node = node_name
-        self.active_controller = controller_name
+        self.switching_controller = True
+        try:
+            rate = self.create_rate(10)
+            future = self.switch_ctrl_client.call_async(request)
+            while not future.done():
+                rate.sleep()
+
+            response = future.result()
+            if response is None or not response.ok:
+                raise RuntimeError(f"Failed to activate controller: {controller_name}")
+
+            self.active_node = node_name
+            self.active_controller = controller_name
+        finally:
+            self.switching_controller = False
         self.get_logger().info(f"Successfully activated controller '{controller_name}' for mission.")
 
     def on_exit_mission_before(self, event_data):
@@ -265,18 +286,71 @@ class ControlCenterNode(Node):
             request.deactivate_controllers = [self.active_controller]
             request.strictness = SwitchReq.STRICT
 
-            rate = self.create_rate(20)
-            future = self.switch_ctrl_client.call_async(request)
-            while not future.done(): 
-                rate.sleep()
-                
-            response = future.result()
-            if response is None or not response.ok:
-                raise RuntimeError(f"Failed to deactivate controller: {self.active_controller}")
+            self.switching_controller = True
+            try:
+                rate = self.create_rate(20)
+                future = self.switch_ctrl_client.call_async(request)
+                while not future.done():
+                    rate.sleep()
+
+                response = future.result()
+                if response is None or not response.ok:
+                    raise RuntimeError(f"Failed to deactivate controller: {self.active_controller}")
+
+                # Noch innerhalb des Flags zurücksetzen, damit der Monitor keinen Fehlalarm auslöst
+                self.active_controller = None
+            finally:
+                self.switching_controller = False
 
         self.active_node = None
         self.active_controller = None
         self.get_logger().info("Mission controller successfully stopped.")
+
+    def controller_monitor_cb(self):
+        """Fragt zyklisch ab, ob der Mission-Controller noch aktiv ist."""
+        if self.state != SystemState.MISSION or not self.active_controller:
+            return
+        if self.switching_controller or self.controller_check_pending:
+            return
+        if not self.list_ctrl_client.service_is_ready():
+            return
+
+        self.controller_check_pending = True
+        expected_controller = self.active_controller
+        future = self.list_ctrl_client.call_async(ListControllers.Request())
+        future.add_done_callback(lambda f: self.controller_monitor_response_cb(f, expected_controller))
+
+    def controller_monitor_response_cb(self, future, expected_controller):
+        try:
+            response = future.result()
+            if response is None:
+                return
+
+            # Zustand könnte sich während der Abfrage geändert haben (z.B. regulärer Disengage)
+            if (self.state != SystemState.MISSION or self.switching_controller
+                    or self.active_controller != expected_controller):
+                return
+
+            ctrl_state = "not loaded"
+            for ctrl in response.controller:
+                if ctrl.name == expected_controller:
+                    ctrl_state = ctrl.state
+                    break
+
+            if ctrl_state != "active":
+                self.controller_lost(controller_state=ctrl_state) # type: ignore
+        except Exception as e:
+            self.get_logger().error(f"Controller monitor failed: {e}", throttle_duration_sec=2.0)
+        finally:
+            self.controller_check_pending = False
+
+    def on_controller_lost_before(self, event_data):
+        ctrl_state = event_data.kwargs.get('controller_state', 'unknown')
+        self.get_logger().error(
+            f"Controller '{self.active_controller}' left active state unexpectedly (state: {ctrl_state}). "
+            f"Mission of '{self.active_node}' aborted. See controller_manager log for reason.")
+        self.active_node = None
+        self.active_controller = None
 
     def on_enter_stop(self, event_data=None):
         self.get_logger().warn("STOP INVOKED: Deactivating all active controllers for safety...")

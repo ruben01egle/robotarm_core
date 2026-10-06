@@ -1,31 +1,29 @@
 FROM ros:jazzy-ros-base
 
+# Things not declared in any package.xml: middleware choice and standalone tooling
+# (numpy is used by robotarm_description/tools/workspace_envelope)
 RUN apt-get update && apt-get install -y \
     python3-pip \
-    libgl1-mesa-dev \
-    libxkbcommon-x11-0 \
-    libxcb-cursor0 \
-    libxcb-icccm4 \
-    libxcb-keysyms1 \
-    libxcb-shape0 \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN apt-get update && apt-get install -y \
+    python3-numpy \
     ros-${ROS_DISTRO}-rmw-cyclonedds-cpp \
-    ros-${ROS_DISTRO}-rviz2 \
-    ros-${ROS_DISTRO}-rviz-common \
-    ros-${ROS_DISTRO}-rviz-default-plugins \
-    ros-${ROS_DISTRO}-xacro \
-    ros-${ROS_DISTRO}-controller-manager-msgs \
-    ros-${ROS_DISTRO}-ros2-control \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
-RUN pip3 install PyQt6 pyqtgraph numpy transitions
+
+# Install all package dependencies declared in the package.xml files under src/.
+# The whole src/ is copied, so any source change reruns this layer on the next rebuild
+# (see .devcontainer/README.md for the manifest-only optimization and why it is not used).
+# After adding a dependency, run inside the container instead of rebuilding:
+#   rosdep install --from-paths src --ignore-src -y
+COPY src /tmp/src
+RUN apt-get update \
+    && rosdep update --rosdistro ${ROS_DISTRO} \
+    && rosdep install --from-paths /tmp/src --ignore-src -y -r --rosdistro ${ROS_DISTRO} \
+    && rm -rf /var/lib/apt/lists/* /tmp/src
 
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
-WORKDIR /ros2_ws
+WORKDIR /robotarm_core
 
-RUN echo "source /opt/ros/$ROS_DISTRO/setup.bash" >> ~/.bashrc
-RUN echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> ~/.bashrc
+RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc \
+    && echo "[ -f /robotarm_core/install/setup.bash ] && source /robotarm_core/install/setup.bash" >> ~/.bashrc

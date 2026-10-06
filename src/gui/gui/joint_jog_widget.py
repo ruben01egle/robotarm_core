@@ -7,12 +7,12 @@ from std_msgs.msg import Float64MultiArray
 from utility.RequestActionClient import RequestActionClient
 from robotarm_interface.srv import RequestAction, SetFloat64
 
-class ManualControlWidget(QWidget):
+class JointJogWidget(QWidget):
     def __init__(self, store, node, parent=None):
         super().__init__(parent)
         self.store = store
         self.node = node
-        self.name = "ManualControlWidget"
+        self.name = "JointJogWidget"
         self.required_controller = "teleop_controller"
 
         self.request_action_client = RequestActionClient(self.node)
@@ -72,7 +72,7 @@ class ManualControlWidget(QWidget):
 
         # --- 1. HEADER & UNLOCK BUTTON ---
         header_layout = QHBoxLayout()
-        header = QLabel("<b>Manual Axis Control</b>")
+        header = QLabel("<b>Joint Jog Control</b>")
         header.setStyleSheet("font-size: 16px;")
         header_layout.addWidget(header)
         header_layout.addStretch()

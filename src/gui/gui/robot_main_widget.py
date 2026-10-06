@@ -5,7 +5,8 @@ from PyQt6.QtGui import QTextCursor
 
 # Deine Widgets importieren
 from .telemetry_widget import TelemetryDashboard
-from .manual_control_widget import ManualControlWidget 
+from .joint_jog_widget import JointJogWidget
+from .cartesian_jog_widget import CartesianJogWidget
 from .control_header_widget import ControlHeader
 
 class RobotMainWindow(QMainWindow):
@@ -36,9 +37,11 @@ class RobotMainWindow(QMainWindow):
         self.control_stack = QStackedWidget()
         self.control_stack.setFixedWidth(400) 
         
-        self.manual_page = ManualControlWidget(self.data_store, self.node)
+        self.joint_page = JointJogWidget(self.data_store, self.node)
+        self.cartesian_page = CartesianJogWidget(self.data_store, self.node)
         
-        self.control_stack.addWidget(self.manual_page)
+        self.control_stack.addWidget(self.joint_page)
+        self.control_stack.addWidget(self.cartesian_page)
 
         self.left_column_layout.addWidget(self.nav_container) 
         self.left_column_layout.addWidget(self.control_stack)
@@ -70,9 +73,11 @@ class RobotMainWindow(QMainWindow):
         self.nav_container = QWidget()
         self.nav_layout = QVBoxLayout(self.nav_container)
         
-        self.btn_manual = QPushButton("MANUAL")
+        self.btn_joint_jog = QPushButton("JOINT JOG")
+        self.btn_cartesian_jog = QPushButton("CARTESIAN JOG")
+        self.nav_buttons = [self.btn_joint_jog, self.btn_cartesian_jog]
         
-        for btn, idx in [(self.btn_manual, 1)]:
+        for idx, btn in enumerate(self.nav_buttons):
             btn.setCheckable(True)
             btn.setAutoExclusive(True)
             btn.setMinimumHeight(40)
@@ -84,11 +89,12 @@ class RobotMainWindow(QMainWindow):
                         background-color: #27ae60;  /* Ein schönes Grün für den aktiven Modus */
                         border: 2px solid #2ecc71;
                     }
+                    QPushButton:disabled { color: #7f8c8d; }
                 """)
             # Lambda nutzt hier den Default-Parameter i=idx, um den Scope zu fixieren
             btn.clicked.connect(lambda checked, i=idx: self.switch_gui_mode(i))
             self.nav_layout.addWidget(btn)
-        self.btn_manual.setChecked(True)
+        self.btn_joint_jog.setChecked(True)
         self.main_layout.addWidget(self.nav_container)
 
     def init_log_console(self):
@@ -109,15 +115,28 @@ class RobotMainWindow(QMainWindow):
     def switch_gui_mode(self, index):
         """Schaltet nur den linken Control-Stack um."""
         self.control_stack.setCurrentIndex(index)
-        modes = ["TRAJECTORY", "MANUAL", "CONFIGURATION"]
+        modes = ["JOINT JOG", "CARTESIAN JOG"]
         self.log_message(f"Gui Mode changed to: {modes[index]}")
 
     def global_update(self):
         """Zentraler Timer-Aufruf. Das Dashboard aktualisiert alle seine Tiles selbst."""
         self.dashboard.update_all()
-        self.manual_page.update_widget()
+        self.joint_page.update_widget()
+        self.cartesian_page.update_widget()
         self.control_header.update_status()
+        self.update_nav_lock()
         self.log_update()
+
+    def update_nav_lock(self):
+        """Solange eine Mission aktiv ist, darf die Control-Seite nicht gewechselt werden."""
+        mission_active = bool(self.data_store.get_status()["active_nodes"])
+        for btn in self.nav_buttons:
+            btn.setEnabled(not mission_active)
+
+    def closeEvent(self, event):
+        # Sicherheit: Null-Twist senden, da der Cartesian-Controller (noch) keinen Timeout hat
+        self.cartesian_page.shutdown()
+        super().closeEvent(event)
 
     def log_update(self):
         new_logs = self.data_store.get_new_logs()
