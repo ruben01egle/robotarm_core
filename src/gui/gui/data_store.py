@@ -11,7 +11,7 @@ class GuiDataStore:
         # 1. Hochfrequente Telemetrie-Daten (nur noch IST-Werte für Plots & Live-Abfragen)
         # Jeder Frame enthält: 'time' und 'joint_state_act' (Liste aus {'p':..., 'v':..., 't':...})
         self.frames = deque(maxlen=maxlen)
-        # TCP-Pose aus TF (Base_1 -> tcp): 'time' und 'axes' (Liste aus {'p':..., 'v':...} für X, Y, Z, Rx, Ry, Rz)
+        # TCP-Pose aus TF (Root-Link der URDF -> tcp): 'time' und 'axes' (Liste aus {'p':..., 'v':...} für X, Y, Z, Rx, Ry, Rz)
         self.cart_frames = deque(maxlen=maxlen)
         
         # 2. Aktuelle Status-Werte der ROS FSM
@@ -23,6 +23,8 @@ class GuiDataStore:
         self.active_controllers = ""
 
         self.joint_limits = list()
+        # Root-Link der URDF (Basis-Frame für die TCP-Pose), None bis die URDF gelesen wurde
+        self.base_frame = None
         # (max_linear_velocity [m/s], max_angular_velocity [rad/s]) vom cartesian_jog_controller
         self.cartesian_limits = None
 
@@ -38,6 +40,7 @@ class GuiDataStore:
             self.active_nodes = ""
             self.active_controllers = ""
             self.joint_limits = list()
+            self.base_frame = None
             self.cartesian_limits = None
             self.frames.clear()
             self.cart_frames.clear()
@@ -87,6 +90,14 @@ class GuiDataStore:
     def get_joint_limits(self):
         with self._lock:
             return self.joint_limits
+
+    def set_base_frame(self, frame: str):
+        with self._lock:
+            self.base_frame = frame
+
+    def get_base_frame(self):
+        with self._lock:
+            return self.base_frame
 
     def set_cartesian_limits(self, max_linear: float, max_angular: float):
         with self._lock:

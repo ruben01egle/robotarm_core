@@ -178,7 +178,8 @@ class TelemetryDashboard(QWidget):
         if self.mode == "joint":
             text = "Waiting for URDF joint limits to initialize telemetry..."
         else:
-            text = "Waiting for TF Base_1 → tcp..."
+            base = self.store.get_base_frame() or "base"
+            text = f"Waiting for TF {base} → tcp..."
         self.placeholder_label.setText(text)
         self.display_stack.setCurrentIndex(2)
 

@@ -19,6 +19,9 @@ from .data_store import GuiDataStore
 
 from robotarm_interface.msg import SystemStatus
 
+# Name des TCP-Links ist in der URDF fest vorgegeben
+TCP_FRAME = 'tcp'
+
 class GuiRosNode(Node):
     def __init__(self, data_store):
         Node.__init__(self, 'gui_ros_node')
@@ -82,8 +85,13 @@ class GuiRosNode(Node):
             self.get_logger().error(f"Error while parsing joint states: {e}", throttle_duration_sec=2.0)
 
     def tcp_pose_cb(self):
+        # Basis-Frame = Root-Link der URDF, erst nach dem Lesen der URDF bekannt
+        base_frame = self.store.get_base_frame()
+        if base_frame is None:
+            return
+
         try:
-            tf = self.tf_buffer.lookup_transform('Base_1', 'tcp', Time())
+            tf = self.tf_buffer.lookup_transform(base_frame, TCP_FRAME, Time())
         except TransformException as e:
             self.get_logger().debug(f"TCP pose not available: {e}", throttle_duration_sec=10.0)
             return
@@ -133,6 +141,11 @@ class GuiRosNode(Node):
             urdf_string = response.values[0].string_value
             
             # URDF parsen
+            base_frame = self.parse_urdf_root_link(urdf_string)
+            if base_frame:
+                self.get_logger().info(f"URDF root link: '{base_frame}'")
+                self.store.set_base_frame(base_frame)
+
             limits = self.parse_urdf_limits(urdf_string)
             
             if limits:
@@ -176,6 +189,21 @@ class GuiRosNode(Node):
 
         except Exception as e:
             self.get_logger().error(f"Error reading cartesian jog limits: {e}")
+
+    def parse_urdf_root_link(self, urdf_xml_str: str):
+        """Root-Link = der einzige Link, der in keinem Joint als 'child' vorkommt."""
+        try:
+            root = ET.fromstring(urdf_xml_str)
+            children = {joint.find('child').get('link') for joint in root.findall('joint')}
+            roots = [link.get('name') for link in root.findall('link') if link.get('name') not in children]
+
+            if len(roots) != 1:
+                self.get_logger().error(f"URDF must have exactly one root link, found: {roots}")
+                return None
+            return roots[0]
+        except Exception as e:
+            self.get_logger().error(f"Error parsing URDF root link: {e}")
+            return None
 
     def parse_urdf_limits(self, urdf_xml_str: str) -> list:
         limits_list = []

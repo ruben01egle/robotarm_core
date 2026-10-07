@@ -1,13 +1,22 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QPushButton, QFrame, QApplication
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QPushButton, QFrame, QApplication, QButtonGroup
 from PyQt6.QtCore import Qt
 
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import TwistStamped
 
 from utility.RequestActionClient import RequestActionClient
 from robotarm_interface.srv import RequestAction
 
 # Slider-Auflösung: -SLIDER_RESOLUTION ... +SLIDER_RESOLUTION entspricht -v_max ... +v_max
 SLIDER_RESOLUTION = 1000
+
+# header.frame_id für den cartesian_jog_controller
+FRAME_BASE = ""      # leer = Root-Link der URDF (Basis), unabhängig vom Link-Namen
+FRAME_TOOL = "tcp"   # TCP-Link, Name ist fest vorgegeben
+
+FRAME_HINTS = {
+    FRAME_BASE: "Base frame · rotation about TCP",
+    FRAME_TOOL: "Tool frame (tcp) · axes follow tool orientation, rotation about TCP",
+}
 
 
 class SpringBackSlider(QSlider):
@@ -51,15 +60,16 @@ class CartesianJogWidget(QWidget):
         self.required_controller = "cartesian_jog_controller"
 
         self.request_action_client = RequestActionClient(self.node)
-        # ACHTUNG: Der Controller hat (noch) keinen Command-Timeout und hält den letzten Twist.
-        # Daher wird zyklisch gesendet und bei jeder Unterbrechung explizit ein Null-Twist geschickt.
+        # Der Controller hat einen 250 ms Watchdog: Befehle werden daher zyklisch gesendet
+        # und bei jeder Unterbrechung wird zusätzlich explizit ein Null-Twist geschickt.
         self.twist_pub = self.node.create_publisher(
-            Twist,
+            TwistStamped,
             '/cartesian_jog_controller/twist_cmds',
             10
         )
 
         # Interner Zustand
+        self.frame_id = FRAME_BASE
         self.max_linear = 0.0
         self.max_angular = 0.0
         self.ui_ready = False
@@ -109,10 +119,6 @@ class CartesianJogWidget(QWidget):
 
         self.main_layout.addLayout(header_layout)
 
-        frame_hint = QLabel("Base frame (Base_1) · rotation about TCP")
-        frame_hint.setStyleSheet("color: #95a5a6; font-size: 11px;")
-        self.main_layout.addWidget(frame_hint)
-
         # --- 2. WARNUNG BEI UNERWARTETEM ABSCHALTEN ---
         self.warning_label = QLabel("")
         self.warning_label.setWordWrap(True)
@@ -123,19 +129,30 @@ class CartesianJogWidget(QWidget):
         self.warning_label.hide()
         self.main_layout.addWidget(self.warning_label)
 
-        # --- 3. STOP / ZERO ALL ---
-        self.btn_zero_all = QPushButton("STOP / ZERO ALL")
-        self.btn_zero_all.setMinimumHeight(50)
-        self.btn_zero_all.setStyleSheet("""
-            QPushButton {
-                background-color: #c0392b; color: white; font-weight: bold;
-                border-radius: 4px; font-size: 15px;
-            }
-            QPushButton:hover { background-color: #e74c3c; }
-            QPushButton:pressed { background-color: #962d22; }
-        """)
-        self.btn_zero_all.clicked.connect(self.zero_all)
-        self.main_layout.addWidget(self.btn_zero_all)
+        # --- 3. KOORDINATENSYSTEM (Base / Tool) ---
+        # Umschalten ist auch während der Bewegung erlaubt, der Controller blendet weich über.
+        frame_row = QHBoxLayout()
+        btn_base = QPushButton("Base")
+        btn_base.setToolTip("Jog along the fixed robot base axes")
+        btn_tool = QPushButton("Tool")
+        btn_tool.setToolTip("Linear: move along the tool's own x/y/z (e.g. tool z = towards workpiece).\n"
+                            "Angular: rotate about the tool axes, tool tip stays in place.")
+
+        self.frame_group = QButtonGroup(self)
+        self.frame_group.setExclusive(True)
+        for btn, frame_id in ((btn_base, FRAME_BASE), (btn_tool, FRAME_TOOL)):
+            btn.setCheckable(True)
+            btn.setFixedWidth(70)
+            btn.setChecked(frame_id == self.frame_id)
+            btn.toggled.connect(lambda checked, f=frame_id: checked and self.set_frame(f))
+            self.frame_group.addButton(btn)
+            frame_row.addWidget(btn)
+
+        self.frame_hint = QLabel(FRAME_HINTS[self.frame_id])
+        self.frame_hint.setStyleSheet("color: #95a5a6; font-size: 11px;")
+        frame_row.addWidget(self.frame_hint)
+        frame_row.addStretch()
+        self.main_layout.addLayout(frame_row)
 
         # --- 4. ACHSEN ---
         self.axes_frame = QFrame()
@@ -186,6 +203,21 @@ class CartesianJogWidget(QWidget):
             self.target_labels.append(target_display)
 
         self.main_layout.addWidget(self.axes_frame)
+
+        # --- 5. STOP / ZERO ALL ---
+        self.btn_zero_all = QPushButton("STOP / ZERO ALL")
+        self.btn_zero_all.setFixedHeight(34)
+        self.btn_zero_all.setStyleSheet("""
+            QPushButton {
+                background-color: #c0392b; color: white; font-weight: bold;
+                border-radius: 4px; font-size: 13px;
+            }
+            QPushButton:hover { background-color: #e74c3c; }
+            QPushButton:pressed { background-color: #962d22; }
+        """)
+        self.btn_zero_all.clicked.connect(self.zero_all)
+        self.main_layout.addWidget(self.btn_zero_all)
+
         self.main_layout.addStretch()
 
         self.ui_ready = True
@@ -206,10 +238,16 @@ class CartesianJogWidget(QWidget):
     def get_target_velocities(self):
         return [self.slider_to_velocity(i, s.value()) for i, s in enumerate(self.sliders)]
 
+    def set_frame(self, frame_id):
+        self.frame_id = frame_id
+        self.frame_hint.setText(FRAME_HINTS[frame_id])
+
     def publish_twist(self, velocities):
-        msg = Twist()
+        msg = TwistStamped()
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.header.frame_id = self.frame_id
         for (_, _, field, component, _), vel in zip(self.AXES, velocities):
-            setattr(getattr(msg, field), component, float(vel))
+            setattr(getattr(msg.twist, field), component, float(vel))
         self.twist_pub.publish(msg)
 
     def zero_all(self):
