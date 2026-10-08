@@ -219,7 +219,7 @@ class JointJogWidget(QWidget):
         self.speed_slider.setEnabled(self.movement_enabled)
 
         if self.movement_enabled:
-            self.btn_toggle_lock.setText("DISENGAGE MOVEMENT")
+            self.btn_toggle_lock.setText("DISABLE MOVEMENT")
             self.btn_toggle_lock.setStyleSheet("background-color: #e74c3c; color: white; font-weight: bold;")
             self.btn_toggle_lock.setChecked(True)
         else:
