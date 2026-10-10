@@ -112,6 +112,8 @@ robotarm_moveit_config/
 │   ├── demo.launch.py            standalone demo with mock hardware
 │   ├── move_group.launch.py      move_group (+ RViz) only, for the real robot
 │   └── setup_assistant.launch.py opens this package in the Setup Assistant
+└── doc/
+    └── firmware_joint_trajectory_controller.md  patch for robotarm_firmware_lnx (see section 7)
 ```
 
 The test script `demo_motions` and the Python MoveIt client are in the package
@@ -531,8 +533,10 @@ Reference implementations: `kdl_kinematics_plugin` (moveit_kinematics) and pick_
      joint gently at low speed); the mock follows perfectly, so they were never triggered here,
    - compare `/joint_states` with the planned trajectory, then raise `joint_limits.yaml` step by step.
 2. **Get the firmware branch into the firmware repository**: the GitHub account used here has no
-   write access to `robotarm_firmware_lnx`. Either get added as collaborator, or fork it and open a
-   pull request, or send the commits as patches (`git format-patch origin/main..HEAD`).
+   write access to `robotarm_firmware_lnx`. The complete change is therefore stored as a patch with
+   apply instructions in [`doc/firmware_joint_trajectory_controller.md`](doc/firmware_joint_trajectory_controller.md)
+   (base: firmware `e5bfe6a`, verified to apply cleanly). Apply it there yourself, or open a pull
+   request after getting collaborator access or forking the repository.
 3. **GUI**: there is no button to start a MoveIt mission or to execute from RViz with a mission
    (deferred on purpose; manual service calls in section 4 work meanwhile). The unused
    `Mission.action` in robotarm_interface could become the interface of a MoveIt mission server.
