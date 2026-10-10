@@ -7,8 +7,17 @@
   <maintainer email="ruben01egle@gmail.com">root</maintainer>
   <license>TODO: License declaration</license>
 
-  <depend>interface</depend>
+  <depend>rclpy</depend>
+  <depend>rcl_interfaces</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>robotarm_interface</depend>
   <depend>utility</depend>
+
+  <exec_depend>python3-pyqt6</exec_depend>
+  <exec_depend>python3-pyqtgraph</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

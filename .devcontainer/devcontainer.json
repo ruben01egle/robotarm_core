@@ -4,23 +4,24 @@
         "context": "..",
         "dockerfile": "./Dockerfile"
     },
+
     "workspaceFolder": "/robotarm_core",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/robotarm_core,type=bind",
     "initializeCommand": "xhost +local:docker",
-    
+
     "runArgs": [
         "--network=host",
         "--ipc=host",
-        "--privileged",
-        "--env=DISPLAY=${localEnv:DISPLAY}"
+        "--privileged"
     ],
 
     "mounts": [
-        "source=${localWorkspaceFolder},target=/robotarm_core,type=bind",
         "source=/etc/localtime,target=/etc/localtime,type=bind,ro",
         "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind"
     ],
 
     "containerEnv": {
+        "DISPLAY": "${localEnv:DISPLAY}",
         "QT_QPA_PLATFORM": "xcb"
     },
 
@@ -30,10 +31,7 @@
                 "ms-python.python",
                 "ms-iot.vscode-ros",
                 "njpwerner.autodocstring",
-                "ms-vscode.cpptools",
-                "ms-vscode.cmake-tools",
                 "ms-vscode.cpptools-extension-pack",
-                "twxe.cmake",
                 "redhat.vscode-xml",
                 "redhat.vscode-yaml",
                 "smilerobotics.urdf",
