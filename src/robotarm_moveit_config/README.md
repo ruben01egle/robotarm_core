@@ -499,23 +499,26 @@ Reference implementations: `kdl_kinematics_plugin` (moveit_kinematics) and pick_
 ### Done (2026-10-04)
 
 1. **`joint_trajectory_controller` in `robotarm_firmware_lnx`**: branch
-   `feature/joint-trajectory-controller` of the firmware repository (committed, **not pushed** yet):
+   `feature/joint-trajectory-controller` of the firmware repository (committed and merged with the
+   firmware `main` of 2026-10-10; **not pushed**, see "Still open"):
    - `controllers.yaml`: `joint_trajectory_controller`, joints `axis1..axis6`, command `position`
      + `velocity`, state `position` + `velocity`, tracking tolerances (`constraints`, PRELIMINARY:
      0.1 rad while moving, 0.01 rad at the goal, 0.5 s goal time),
-   - spawned `--inactive` in `robotarm_mock.launch.py` and `robotarm_hardware.launch.py`,
+   - spawned `--inactive` in `robotarm.launch.py`, which the mock and hardware launch files include,
    - `exec_depend` in `robotarm_bringup/package.xml`, README updated.
 2. **Activation through `control_center`**: [`robotarm_motion`](../robotarm_motion/README.md)
-   (`ControlCenterMission`) starts/stops the mission and cancels the MoveIt goal when control_center
-   goes to STOP/ERROR/EMERGENCY. control_center allows only one mission at a time, so teleop and the
-   trajectory controller (same command interfaces) are never active together. Verified with the
+   (`ControlCenterMission`) starts/stops the mission and cancels the MoveIt goal whenever
+   control_center leaves MISSION on its own (STOP, ERROR, EMERGENCY, or `controller_lost` when the
+   controller is deactivated by someone else). control_center allows only one mission at a time, so
+   teleop, Cartesian jogging and the trajectory controller (same command interfaces) are never
+   active together. Verified with the
    firmware mock (section 9).
-3. **`teleop_controller` covers `axis1..axis6`** (firmware branch, `controllers.yaml`).
-4. **URDF limits**: `robotarm_description` `8ab90ac` (pinned here and in the firmware) has real
+3. **`teleop_controller` covers `axis1..axis6`** (done in our branch and independently upstream).
+4. **URDF limits**: `robotarm_description` (`88cd31e`, pinned here and in the firmware) has real
    velocity (2.5–3.14 rad/s) and effort limits. Acceleration limits exist only in `joint_limits.yaml`.
 5. **Dockerfile** installs `moveit`, `pick-ik`, `ros2-controllers`, `pinocchio` (robotarm_rbd
    tests) and `joint-state-publisher-gui`.
-6. **Workspace build**: the `robotarm_rbd` test typo is fixed upstream (`8ab90ac`); a plain
+6. **Workspace build**: the `robotarm_rbd` test typo is fixed upstream; a plain
    `colcon build` of the whole workspace succeeds (with `pinocchio` installed).
 7. **`robot_bringup/launch/launch_robot.py`** starts `move_group.launch.py` (`moveit:=true`, default),
    with `rviz:=` and `gui:=` arguments.
@@ -527,7 +530,9 @@ Reference implementations: `kdl_kinematics_plugin` (moveit_kinematics) and pick_
    - check that the trajectory tolerances in the firmware `controllers.yaml` trigger (e.g. block a
      joint gently at low speed); the mock follows perfectly, so they were never triggered here,
    - compare `/joint_states` with the planned trajectory, then raise `joint_limits.yaml` step by step.
-2. **Push the firmware branch** `feature/joint-trajectory-controller` and merge it.
+2. **Get the firmware branch into the firmware repository**: the GitHub account used here has no
+   write access to `robotarm_firmware_lnx`. Either get added as collaborator, or fork it and open a
+   pull request, or send the commits as patches (`git format-patch origin/main..HEAD`).
 3. **GUI**: there is no button to start a MoveIt mission or to execute from RViz with a mission
    (deferred on purpose; manual service calls in section 4 work meanwhile). The unused
    `Mission.action` in robotarm_interface could become the interface of a MoveIt mission server.
@@ -544,18 +549,14 @@ Reference implementations: `kdl_kinematics_plugin` (moveit_kinematics) and pick_
 ### Other findings
 
 1. **robotarm_interface**:
-   - `CMakeLists.txt` only generates `RequestAction.srv`, `SystemStatus.msg` and `SetFloat64.srv`.
-    The messages `AxisData`, `MotorParameter`, `TrajectoryFrame`, the service `CANFDTunnel` and all
-    actions (`Mission`, `PlanCSV`, `PlanJointSpace`, `ConfigMotor`, `ReadMotorConfigs`) are not
-    built. Actions would also need `action_msgs` as a dependency.
+   - `CMakeLists.txt` only generates `RequestAction.srv`, `SystemStatus.msg`,
+     `CartesianIncrement.msg` and `SetFloat64.srv`. The messages `AxisData`, `MotorParameter`,
+     `TrajectoryFrame` and all actions (`Mission`, `PlanCSV`, `PlanJointSpace`, `ConfigMotor`,
+     `ReadMotorConfigs`) are not built. Actions would also need `action_msgs` as a dependency.
    - `PlanJointSpace.action` uses a type `JointAngles` that does not exist.
-2. **Wrong/missing dependencies in package.xml files** (`rosdep install` fails for the whole workspace):
-   - `gui/package.xml` depends on `interface`; the package is called `robotarm_interface`.
-   - `robot_bringup/package.xml` depends on `interface`, `mission_controller`, `udp_agent`,
-    `hardware_simulation`, which do not exist in this repository.
-   - `control_center/package.xml` lacks `rclpy`, `sensor_msgs`, `lifecycle_msgs`,
-    `python3-transitions`. `gui` has similar gaps.
-3. **GUI speed service name**: `manual_control_widget.py` creates a client for
+2. ~~**Wrong/missing dependencies in package.xml files**~~: fixed upstream (2026-10); `rosdep install
+   --from-paths src` works for the whole workspace.
+3. **GUI speed service name**: `joint_jog_widget.py` creates a client for
    `/teleop_controller/scale_speed` but the warning mentions `/teleop_controller/set_speed`. One of
    the two is wrong (depends on the firmware).
 4. **`rviz.launch.py`**: exists in `robotarm_description/launch/` and is included by
@@ -770,6 +771,31 @@ What this shows:
   `max_cartesian_speed` is **ignored** by the move_group service in MoveIt 2.12.4 (no effect measured;
   the capability library does not use the Cartesian speed limiter). Limit the speed with
   `max_velocity_scaling_factor` instead.
+
+### After merging upstream `main` (2026-10-10)
+
+Both feature branches were merged with the current `main` of their repositories:
+- robotarm_core: Ruben's Cartesian jogging, GUI rework, Docker image; `controller_lost` in
+  control_center; `robotarm_description` `88cd31e`, `robotarm_interface` `2a41685`.
+- firmware: `CartesianJogController`, shared `robotarm.launch.py`, same submodule commits.
+
+The tests were then repeated: `colcon build` of both workspaces (OK), `robotarm_motion` lint tests
+(2/2), and the standalone demo (all checks passed). With the firmware mock:
+
+| # | Test | Result |
+|---|---|---|
+| 0 | Startup | 4 controllers: `joint_state_broadcaster` active; `teleop_controller`, `cartesian_jog_controller`, `joint_trajectory_controller` inactive; control_center `CONNECTED` |
+| 1 | Mission without arming | refused (`arm the robot first`) |
+| 2 | `--mission --arm --execute-lin` | all checks passed; LIN 4.99 cm, 0.069 mm deviation |
+| 3 | STOP during a motion | `MissionAborted: control_center switched to STOP`; joints frozen |
+| 4 | Controller deactivated behind control_center's back (`ros2 control set_controller_state joint_trajectory_controller inactive`) during a motion | control_center: `left active state unexpectedly` → `ARMED`; client: `MissionAborted: control_center switched to ARMED`, no further motions |
+| 5 | New mission afterwards | all checks passed |
+| 6 | Teleop mission, 6-value command | all 6 axes reach the command |
+
+Test 4 first showed a race. MoveIt reported `CONTROL_FAILED` within milliseconds, while
+control_center only notices a lost controller on its next 0.2 s check. The client therefore
+continued with the next motions, which failed harmlessly. Now `ControlCenterMission` waits up to 1 s
+for the status after a failed motion and reports the actual cause.
 
 ### Not verified here
 
