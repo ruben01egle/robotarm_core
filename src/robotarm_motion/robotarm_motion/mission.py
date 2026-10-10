@@ -9,9 +9,10 @@ control_center activates it. A MoveIt client therefore has to:
   2. send its MoveIt goals,
   3. request ACTION_MISSION / TYPE_STOP with the same node_name.
 
-If the operator triggers STOP (or control_center goes to ERROR/EMERGENCY), control_center
-deactivates the controller by itself. ControlCenterMission notices this on /system_status, cancels
-the running MoveIt goal and raises MissionAborted for every further motion.
+control_center can also end the mission by itself: STOP by the operator, ERROR, EMERGENCY, or
+controller_lost (the controller left the active state on its own; back to ARMED). In every case
+the state leaves MISSION. ControlCenterMission notices this on /system_status, cancels the running
+MoveIt goal and raises MissionAborted for every further motion.
 
 Usage (node spun in another thread, see moveit_client.spin_in_background):
 
@@ -22,13 +23,11 @@ Usage (node spun in another thread, see moveit_client.spin_in_background):
 
 import threading
 
+from moveit_msgs.msg import MoveItErrorCodes
 from robotarm_interface.msg import SystemStatus
 from robotarm_interface.srv import RequestAction
 
 from robotarm_motion.moveit_client import MotionError, wait_for
-
-# control_center states (SystemStatus.state) in which a running mission is aborted
-ABORT_STATES = ('STOP', 'ERROR', 'EMERGENCY')
 
 
 class MissionError(RuntimeError):
@@ -36,7 +35,7 @@ class MissionError(RuntimeError):
 
 
 class MissionAborted(MissionError):
-    """control_center stopped the mission (STOP, ERROR or EMERGENCY)."""
+    """control_center ended the mission (STOP, ERROR, EMERGENCY or controller lost)."""
 
 
 class ControlCenterMission:
@@ -58,6 +57,9 @@ class ControlCenterMission:
         self.state = None
         self.aborted = None  # reason, once control_center left the mission on its own
         self.active = False
+        # set once /system_status has reported MISSION; before that, a status message published
+        # just before the transition may still say ARMED and must not count as an abort
+        self._mission_seen = False
         self._status_event = threading.Event()
         self._client = node.create_client(RequestAction, 'request_action')
         node.create_subscription(SystemStatus, 'system_status', self._status_cb, 10)
@@ -65,7 +67,11 @@ class ControlCenterMission:
     def _status_cb(self, msg):
         self.state = msg.state
         self._status_event.set()
-        if self.active and self.aborted is None and msg.state in ABORT_STATES:
+        if not self.active or self.aborted is not None:
+            return
+        if msg.state == 'MISSION':
+            self._mission_seen = True
+        elif self._mission_seen:
             self.aborted = f'control_center switched to {msg.state}'
             self.node.get_logger().error(f'{self.aborted}: cancelling the MoveIt goal')
             self.moveit.cancel()
@@ -102,7 +108,9 @@ class ControlCenterMission:
             self._wait_for_state(('ARMED',), self.timeout)
         self._request(RequestAction.Request.ACTION_MISSION, RequestAction.Request.TYPE_START)
         self.aborted = None
+        self._mission_seen = False
         self.active = True
+        self._wait_for_state(('MISSION',), self.timeout)
         self.node.get_logger().info(f'mission started, {self.controller} active')
 
     def stop(self):
@@ -122,10 +130,27 @@ class ControlCenterMission:
         if self.aborted is not None:
             raise MissionAborted(self.aborted)
 
+    def _check_after_failure(self, settle=1.0):
+        """
+        After a failed motion: wait for control_center's view, then raise MissionAborted if any.
+
+        MoveIt reports a failed execution within milliseconds after the controller is
+        deactivated, but control_center notices a lost controller only on its next check (0.2 s)
+        and publishes /system_status at 10 Hz. Waiting up to settle seconds for a state other
+        than MISSION reports the real cause (STOP, controller lost) instead of the execution error.
+        """
+        end = self.node.get_clock().now().nanoseconds + settle * 1e9
+        while self.aborted is None and self.node.get_clock().now().nanoseconds < end:
+            self._status_event.clear()
+            self._status_event.wait(0.1)
+        self.check()
+
     def run(self, request, plan_only):
         """MoveItClient.run inside the mission; raises MissionAborted after a STOP."""
         self.check()
         result = self.moveit.run(request, plan_only)
+        if result.error_code.val != MoveItErrorCodes.SUCCESS:
+            self._check_after_failure()
         self.check()
         return result
 
@@ -135,7 +160,7 @@ class ControlCenterMission:
         try:
             return self.moveit.execute(request)
         except MotionError:
-            self.check()  # report the STOP rather than the resulting execution error
+            self._check_after_failure()  # report the STOP rather than the execution error
             raise
 
     def __enter__(self):

@@ -47,6 +47,11 @@ aborts its goal and holds the current position. `ControlCenterMission` sees `STO
 `/system_status` and cancels the MoveIt goal; every further motion raises `MissionAborted`. The
 mission is then over. After `exit_stop` (back to ARMED), a new mission has to be started.
 
+The same happens for every other way control_center can end a mission: ERROR, EMERGENCY, or
+`controller_lost`, where the controller left the active state on its own and control_center goes
+back to ARMED. The rule is simple: once the mission has been seen as `MISSION`, any other state
+counts as aborted.
+
 ## Usage in code
 
 ```python
