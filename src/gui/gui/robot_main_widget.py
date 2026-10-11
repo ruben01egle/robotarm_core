@@ -7,6 +7,7 @@ from PyQt6.QtGui import QTextCursor
 from .telemetry_widget import TelemetryDashboard
 from .joint_jog_widget import JointJogWidget
 from .cartesian_jog_widget import CartesianJogWidget
+from .cartesian_impedance_widget import CartesianImpedanceWidget
 from .control_header_widget import ControlHeader
 
 class RobotMainWindow(QMainWindow):
@@ -39,9 +40,11 @@ class RobotMainWindow(QMainWindow):
         
         self.joint_page = JointJogWidget(self.data_store, self.node)
         self.cartesian_page = CartesianJogWidget(self.data_store, self.node)
+        self.impedance_page = CartesianImpedanceWidget(self.data_store, self.node)
         
         self.control_stack.addWidget(self.joint_page)
         self.control_stack.addWidget(self.cartesian_page)
+        self.control_stack.addWidget(self.impedance_page)
 
         self.left_column_layout.addWidget(self.nav_container) 
         self.left_column_layout.addWidget(self.control_stack)
@@ -75,7 +78,8 @@ class RobotMainWindow(QMainWindow):
         
         self.btn_joint_jog = QPushButton("JOINT JOG")
         self.btn_cartesian_jog = QPushButton("CARTESIAN JOG")
-        self.nav_buttons = [self.btn_joint_jog, self.btn_cartesian_jog]
+        self.btn_impedance = QPushButton("CARTESIAN IMPEDANCE")
+        self.nav_buttons = [self.btn_joint_jog, self.btn_cartesian_jog, self.btn_impedance]
         
         for idx, btn in enumerate(self.nav_buttons):
             btn.setCheckable(True)
@@ -115,7 +119,7 @@ class RobotMainWindow(QMainWindow):
     def switch_gui_mode(self, index):
         """Schaltet nur den linken Control-Stack um."""
         self.control_stack.setCurrentIndex(index)
-        modes = ["JOINT JOG", "CARTESIAN JOG"]
+        modes = ["JOINT JOG", "CARTESIAN JOG", "CARTESIAN IMPEDANCE"]
         self.log_message(f"Gui Mode changed to: {modes[index]}")
 
     def global_update(self):
@@ -123,6 +127,7 @@ class RobotMainWindow(QMainWindow):
         self.dashboard.update_all()
         self.joint_page.update_widget()
         self.cartesian_page.update_widget()
+        self.impedance_page.update_widget()
         self.control_header.update_status()
         self.update_nav_lock()
         self.log_update()
