@@ -9,6 +9,9 @@ from utility.RequestActionClient import RequestActionClient
 from robotarm_interface.srv import RequestAction
 from robotarm_interface.msg import CartesianIncrement
 
+from .controller_modes import (ExecutionToggle, CARTESIAN_JOG_CONTROLLERS, POSITION, COMPLIANT,
+                               controller_set, set_available)
+
 # Slider-Auflösung: -SLIDER_RESOLUTION ... +SLIDER_RESOLUTION entspricht -v_max ... +v_max
 SLIDER_RESOLUTION = 1000
 
@@ -17,7 +20,7 @@ INC_LINEAR = 0.001               # m (1 mm)
 INC_ANGULAR = math.radians(1.0)  # rad (1°)
 INC_LABELS = {"linear": "1 mm", "angular": "1°"}
 
-# header.frame_id für den cartesian_jog_controller
+# header.frame_id für die Jog-Controller
 FRAME_BASE = ""      # leer = Root-Link der URDF (Basis), unabhängig vom Link-Namen
 FRAME_TOOL = "tcp"   # TCP-Link, Name ist fest vorgegeben
 
@@ -65,34 +68,33 @@ class CartesianJogWidget(QWidget):
         self.store = store
         self.node = node
         self.name = "CartesianJogWidget"
-        self.required_controller = "cartesian_jog_controller"
 
         self.request_action_client = RequestActionClient(self.node)
+        # Je Modus eine Instanz des CartesianJogControllers, gleiche Schnittstelle unter anderem Namen.
         # Twist-Protokoll: nur während aktivem Jog zyklisch senden (Watchdog 250 ms), beim Loslassen
         # genau EIN Null-Twist, im Leerlauf nichts. Jeder Twist (auch Null) bricht ein laufendes Inkrement ab.
-        self.twist_pub = self.node.create_publisher(
-            TwistStamped,
-            '/cartesian_jog_controller/twist_cmds',
-            10
-        )
+        self.twist_pubs = {
+            mode: self.node.create_publisher(TwistStamped, f'/{name}/twist_cmds', 10)
+            for mode, name in CARTESIAN_JOG_CONTROLLERS.items()
+        }
         # Inkremente: genau eine Nachricht pro Klick, relativ zur aktuellen Position, nicht streamen
-        self.increment_pub = self.node.create_publisher(
-            CartesianIncrement,
-            '/cartesian_jog_controller/increment_cmds',
-            10
-        )
+        self.increment_pubs = {
+            mode: self.node.create_publisher(CartesianIncrement, f'/{name}/increment_cmds', 10)
+            for mode, name in CARTESIAN_JOG_CONTROLLERS.items()
+        }
 
         # Interner Zustand
         self.jogging = False
         self.frame_id = FRAME_BASE
-        self.max_linear = 0.0
-        self.max_angular = 0.0
+        # Controller-Name -> (max_linear, max_angular), Limits können je Instanz verschieden sein
+        self.velocity_limits = {}
         self.ui_ready = False
         self.movement_enabled = False
         self.disengage_requested = False
 
         self.sliders = []
         self.target_labels = []
+        self.limit_labels = []
         self.increment_buttons = []
 
         # Haupt-Layout vorbereiten (bleibt leer, bis die Controller-Limits gelesen wurden)
@@ -108,15 +110,16 @@ class CartesianJogWidget(QWidget):
         if app is not None:
             app.applicationStateChanged.connect(self.on_application_state_changed)
 
-    def set_velocity_limits(self, limits: tuple):
-        """Erwartet (max_linear_velocity [m/s], max_angular_velocity [rad/s])."""
+    def build_ui(self, limits: dict):
+        """Wird aufgebaut, sobald die Limits mindestens einer Jog-Instanz gelesen wurden."""
         if not limits:
             return
 
-        self.max_linear, self.max_angular = limits
+        self.velocity_limits = limits
 
         # Platzhalter entfernen
         self.main_layout.removeWidget(self.placeholder_label)
+        self.placeholder_label.hide()
         self.placeholder_label.deleteLater()
 
         # --- 1. HEADER & UNLOCK BUTTON ---
@@ -134,6 +137,11 @@ class CartesianJogWidget(QWidget):
         header_layout.addWidget(self.btn_toggle_lock)
 
         self.main_layout.addLayout(header_layout)
+
+        # Position (cartesian_jog_controller) | Compliant (impedance + cartesian_jog_controller_impedance)
+        self.execution_toggle = ExecutionToggle()
+        self.execution_toggle.mode_changed.connect(lambda _: self.update_limit_labels())
+        self.main_layout.addWidget(self.execution_toggle)
 
         # --- 2. WARNUNG BEI UNERWARTETEM ABSCHALTEN ---
         self.warning_label = QLabel("")
@@ -177,14 +185,14 @@ class CartesianJogWidget(QWidget):
 
         for i, (axis_name, short_name, field, _, unit) in enumerate(self.AXES):
             axis_layout = QVBoxLayout()
-            v_max = self.axis_max(i)
 
-            # Zeile 1: Name und Limit
+            # Zeile 1: Name und Limit (Text je Modus in update_limit_labels)
             label_row = QHBoxLayout()
             name_label = QLabel(axis_name)
             name_label.setStyleSheet("font-weight: bold;")
 
-            limit_label = QLabel(f"max ±{v_max:.3f} {unit}")
+            limit_label = QLabel("")
+            self.limit_labels.append(limit_label)
             limit_label.setStyleSheet("font-family: monospace; color: #95a5a6; font-size: 10px;")
 
             label_row.addWidget(name_label)
@@ -247,6 +255,7 @@ class CartesianJogWidget(QWidget):
         self.ui_ready = True
 
         # Initialen Sperr-Zustand erzwingen
+        self.update_limit_labels()
         self.update_ui_lock_state()
 
     def make_increment_button(self, idx, sign, text, short_name):
@@ -259,8 +268,25 @@ class CartesianJogWidget(QWidget):
         self.increment_buttons.append(btn)
         return btn
 
+    def execution_mode(self) -> str:
+        return self.execution_toggle.mode() if self.ui_ready else None
+
+    def current_limits(self):
+        """Limits der Instanz des gewählten Modus oder None, solange nicht gelesen."""
+        return self.velocity_limits.get(CARTESIAN_JOG_CONTROLLERS[self.execution_toggle.mode()])
+
     def axis_max(self, idx):
-        return self.max_linear if self.AXES[idx][2] == "linear" else self.max_angular
+        limits = self.current_limits()
+        if limits is None:
+            return 0.0
+        return limits[0] if self.AXES[idx][2] == "linear" else limits[1]
+
+    def update_limit_labels(self):
+        known = self.current_limits() is not None
+        for i, label in enumerate(self.limit_labels):
+            label.setText(f"max ±{self.axis_max(i):.3f} {self.AXES[i][4]}" if known else "limits not read yet")
+        # Ohne Limits keine Freigabe möglich (Slider wären wirkungslos)
+        self.btn_toggle_lock.setEnabled(known or self.movement_enabled)
 
     def slider_to_velocity(self, idx, slider_value):
         return slider_value / SLIDER_RESOLUTION * self.axis_max(idx)
@@ -281,7 +307,7 @@ class CartesianJogWidget(QWidget):
         msg.header.frame_id = self.frame_id
         for (_, _, field, component, _), vel in zip(self.AXES, velocities):
             setattr(getattr(msg.twist, field), component, float(vel))
-        self.twist_pub.publish(msg)
+        self.twist_pubs[self.execution_toggle.mode()].publish(msg)
 
     def publish_increment(self, idx, sign):
         """Genau eine Inkrement-Nachricht pro Klick für eine Achse."""
@@ -292,10 +318,12 @@ class CartesianJogWidget(QWidget):
         msg.header.stamp = self.node.get_clock().now().to_msg()
         msg.header.frame_id = self.frame_id
         setattr(getattr(msg, field), component, float(sign * step))
-        self.increment_pub.publish(msg)
+        self.increment_pubs[self.execution_toggle.mode()].publish(msg)
 
     def zero_all(self):
         """Setzt alle Slider auf 0 und sendet sofort einen Null-Twist (Soft-Stop, bricht auch Inkremente ab)."""
+        if not self.ui_ready:
+            return
         for i, slider in enumerate(self.sliders):
             slider.blockSignals(True)
             slider.setValue(0)
@@ -305,10 +333,14 @@ class CartesianJogWidget(QWidget):
         self.publish_twist([0.0] * len(self.AXES))
 
     def shutdown(self):
-        """Beim Schließen der GUI: Null-Twist senden, damit der Arm nicht weiterfährt."""
+        """Beim Schließen der GUI: Null-Twist an beide Instanzen senden, damit der Arm nicht weiterfährt."""
         try:
+            msg = TwistStamped()
+            msg.header.stamp = self.node.get_clock().now().to_msg()
+            msg.header.frame_id = self.frame_id
             for _ in range(3):
-                self.publish_twist([0.0] * len(self.AXES))
+                for pub in self.twist_pubs.values():
+                    pub.publish(msg)
         except Exception as e:
             print(f"[CartesianJogWidget] Failed to send zero twist on shutdown: {e}")
 
@@ -344,12 +376,14 @@ class CartesianJogWidget(QWidget):
             request_type=req_type,
             user_cb=cb,
             node_name=self.name,
-            controller_names=self.required_controller)
+            controller_names=controller_set(CARTESIAN_JOG_CONTROLLERS, self.execution_toggle.mode()))
 
     def update_ui_lock_state(self):
         """Aktiviert oder deaktiviert alle Eingabeelemente basierend auf movement_enabled."""
         for widget in self.sliders + self.increment_buttons:
             widget.setEnabled(self.movement_enabled)
+        self.execution_toggle.set_locked(self.movement_enabled)
+        self.update_limit_labels()
 
         if self.movement_enabled:
             self.btn_toggle_lock.setText("DISABLE MOVEMENT")
@@ -384,8 +418,18 @@ class CartesianJogWidget(QWidget):
     def update_widget(self):
         """Wird zyklisch vom übergeordneten GUI-Timer aufgerufen (~30 Hz) und streamt den Twist während des Jogs."""
         if not self.ui_ready:
-            self.set_velocity_limits(self.store.get_cartesian_limits())
+            self.build_ui(self.store.get_cartesian_limits())
             return
+
+        limits = self.store.get_cartesian_limits()
+        if limits != self.velocity_limits:
+            self.velocity_limits = limits
+            self.update_limit_labels()
+
+        loaded = self.store.get_loaded_controllers()
+        self.execution_toggle.set_available(
+            set_available(controller_set(CARTESIAN_JOG_CONTROLLERS, POSITION), loaded),
+            set_available(controller_set(CARTESIAN_JOG_CONTROLLERS, COMPLIANT), loaded))
 
         status = self.store.get_status()
         self.set_movement_allowed(self.name in status["active_nodes"], status["state"])
