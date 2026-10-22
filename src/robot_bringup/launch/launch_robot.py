@@ -17,6 +17,7 @@ def generate_launch_description():
     rviz = LaunchConfiguration('rviz')
     gui = LaunchConfiguration('gui')
     tool = LaunchConfiguration('tool')
+    use_sim_time = LaunchConfiguration('use_sim_time')
 
     # MoveIt (move_group) with the MotionPlanning RViz; it replaces the plain RViz below.
     # Needs the RT PC (or the firmware mock) for /joint_states, /tf and joint_trajectory_controller.
@@ -24,7 +25,7 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(moveit_config_share, 'launch', 'move_group.launch.py')
         ),
-        launch_arguments={'rviz': rviz, 'tool': tool}.items(),
+        launch_arguments={'rviz': rviz, 'tool': tool, 'use_sim_time': use_sim_time}.items(),
         condition=IfCondition(moveit)
     )
 
@@ -46,6 +47,8 @@ def generate_launch_description():
                               description='Start the operator GUI'),
         DeclareLaunchArgument('tool', default_value='axis_triad',
                               description='Tool on the flange for MoveIt, must match the RT PC'),
+        DeclareLaunchArgument('use_sim_time', default_value='false',
+                              description='MoveIt on simulation time (true with the MuJoCo sim)'),
 
         Node(
             package='control_center',

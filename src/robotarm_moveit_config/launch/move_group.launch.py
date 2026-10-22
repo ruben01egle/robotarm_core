@@ -11,6 +11,7 @@ Arguments:
   rviz:=true|false   start RViz (default: true)
   tool:=<name>       tool on the flange, file in robotarm_description/urdf/tools/ without .xacro
                      (default: axis_triad, as on the RT PC; "none" = tcp on the flange)
+  use_sim_time:=true|false   use the /clock of a simulation (MuJoCo sim: true; default: false)
 """
 
 from launch import LaunchDescription
@@ -57,6 +58,9 @@ def load_moveit_config(tool):
 
 def launch_setup(context):
     moveit_config = load_moveit_config(LaunchConfiguration('tool').perform(context))
+    # The MuJoCo sim stamps /joint_states with sim time; with wall time move_group would consider
+    # the robot state outdated ("Failed to fetch current robot state").
+    sim_time = {'use_sim_time': LaunchConfiguration('use_sim_time').perform(context) == 'true'}
 
     move_group_node = Node(
         package='moveit_ros_move_group',
@@ -71,6 +75,7 @@ def launch_setup(context):
                 # do not copy velocities/efforts from /joint_states into the planning scene
                 'monitor_dynamics': False,
             },
+            sim_time,
         ],
     )
 
@@ -88,6 +93,7 @@ def launch_setup(context):
             moveit_config.robot_description_kinematics,
             moveit_config.planning_pipelines,
             moveit_config.joint_limits,
+            sim_time,
         ],
         condition=IfCondition(LaunchConfiguration('rviz')),
     )
@@ -102,5 +108,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'tool', default_value=DEFAULT_TOOL,
             description='tool on the flange, file in robotarm_description/urdf/tools/'),
+        DeclareLaunchArgument(
+            'use_sim_time', default_value='false',
+            description='true: use the /clock of a simulation (MuJoCo sim)'),
         OpaqueFunction(function=launch_setup),
     ])
