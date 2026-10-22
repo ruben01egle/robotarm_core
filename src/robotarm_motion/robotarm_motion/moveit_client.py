@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Pose
-from moveit_msgs.action import MoveGroup
+from moveit_msgs.action import ExecuteTrajectory, MoveGroup
 from moveit_msgs.msg import (
     Constraints,
     JointConstraint,
@@ -26,8 +26,10 @@ from moveit_msgs.msg import (
 from moveit_msgs.srv import GetPositionFK
 from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import JointState
 from shape_msgs.msg import SolidPrimitive
+from std_msgs.msg import String
 import yaml
 
 GROUP = 'arm'
@@ -36,6 +38,15 @@ TCP_LINK = 'tcp'
 OMPL = 'ompl'
 PILZ = 'pilz_industrial_motion_planner'
 CONFIG_PACKAGE = 'robotarm_moveit_config'
+# [rad] a current position at most this far outside a joint limit is clamped onto the limit before
+# planning (a joint resting on its limit). Same value as
+# trajectory_execution.allowed_start_tolerance in moveit_controllers.yaml, so execution accepts
+# the clamped start; larger deviations are left to MoveIt, which refuses (START_STATE_INVALID).
+START_STATE_CLAMP_TOLERANCE = 0.01
+# [rad] clamped positions are put this far inside the limit. A joint held on its limit jitters
+# around it by a few µrad (seen in the MuJoCo sim): without the margin, move_group can read a
+# value just outside while the client saw one just inside.
+START_STATE_CLAMP_MARGIN = 1e-6
 
 # MoveItErrorCodes value -> name, for readable output
 ERROR_NAMES = {
@@ -89,6 +100,36 @@ def load_velocity_limits():
     return {joint: values['max_velocity'] for joint, values in limits.items()}
 
 
+def parse_position_limits(urdf):
+    """Position limits of the revolute/prismatic joints of a URDF: {joint: (lower, upper)}."""
+    limits = {}
+    for joint in ET.fromstring(urdf).iter('joint'):
+        limit = joint.find('limit')
+        if joint.get('type') in ('revolute', 'prismatic') and limit is not None:
+            limits[joint.get('name')] = (float(limit.get('lower')), float(limit.get('upper')))
+    return limits
+
+
+def clamp_to_limits(positions, limits, tolerance=START_STATE_CLAMP_TOLERANCE,
+                    margin=START_STATE_CLAMP_MARGIN):
+    """
+    Clamp positions {joint: rad} that are at most tolerance outside their limits, margin inside.
+
+    Returns (clamped positions, {joint: clamped amount}); joints further outside are kept as they
+    are, so MoveIt reports them.
+    """
+    clamped, changes = dict(positions), {}
+    for name, value in positions.items():
+        if name not in limits:
+            continue
+        lower, upper = limits[name]
+        target = min(max(value, lower + margin), upper - margin)
+        if target != value and abs(target - value) <= tolerance:
+            clamped[name] = target
+            changes[name] = target - value
+    return clamped, changes
+
+
 def duration_s(duration):
     """Convert a builtin_interfaces/Duration to seconds."""
     return duration.sec + duration.nanosec * 1e-9
@@ -102,16 +143,46 @@ class MoveItClient:
         self.node = node
         self.scaling = scaling
         self._move_client = ActionClient(node, MoveGroup, 'move_action')
+        self._execute_client = ActionClient(node, ExecuteTrajectory, 'execute_trajectory')
         self._fk_client = node.create_client(GetPositionFK, 'compute_fk')
         self._goal_lock = threading.Lock()
         self._goal_handle = None
         self._joint_state = None
         self._joint_state_event = threading.Event()
+        self._position_limits = {}
         node.create_subscription(JointState, 'joint_states', self._joint_state_cb, 10)
+        # the URDF the robot runs with (robot_state_publisher, latched), for the position limits
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        node.create_subscription(String, 'robot_description', self._description_cb, latched)
 
     def _joint_state_cb(self, msg):
         self._joint_state = msg
         self._joint_state_event.set()
+
+    def _description_cb(self, msg):
+        self._position_limits = parse_position_limits(msg.data)
+
+    def _start_state(self):
+        """
+        Start state for a request without an explicit one.
+
+        Normally "the current state" (is_diff), which move_group takes from /joint_states. If a
+        joint rests slightly outside its limit, MoveIt would refuse to plan; then the current state
+        clamped onto the limit is given explicitly.
+        """
+        msg = self._joint_state
+        current = RobotState()
+        current.is_diff = True
+        if msg is None or not self._position_limits:
+            return current
+        positions = dict(zip(msg.name, msg.position))
+        clamped, changes = clamp_to_limits(positions, self._position_limits)
+        if not changes:
+            return current
+        self.node.get_logger().info(
+            'start state clamped onto joint limits: ' +
+            ', '.join(f'{name} {delta:+.6f} rad' for name, delta in changes.items()))
+        return self.robot_state(clamped)
 
     def wait_for_servers(self, timeout=30.0):
         """Wait until move_group offers /move_action and /compute_fk."""
@@ -119,6 +190,8 @@ class MoveItClient:
             raise MotionError('move_group action /move_action not available')
         if not self._fk_client.wait_for_service(timeout_sec=timeout):
             raise MotionError('service /compute_fk not available')
+        if not self._execute_client.wait_for_server(timeout_sec=timeout):
+            raise MotionError('move_group action /execute_trajectory not available')
 
     # ----- request building -------------------------------------------------------------------
 
@@ -141,10 +214,8 @@ class MoveItClient:
         req.workspace_parameters.max_corner.x = 1.5
         req.workspace_parameters.max_corner.y = 1.5
         req.workspace_parameters.max_corner.z = 1.5
-        if start_state is None:
-            req.start_state.is_diff = True  # start at the current robot state
-        else:
-            req.start_state = start_state
+        # start at the current robot state, clamped onto the joint limits if it is just outside
+        req.start_state = self._start_state() if start_state is None else start_state
         return req
 
     @staticmethod
@@ -195,16 +266,41 @@ class MoveItClient:
     # ----- calls ------------------------------------------------------------------------------
 
     def run(self, request, plan_only):
-        """Send request to move_group; returns the MoveGroup result (check result.error_code)."""
+        """
+        Send request to move_group; returns the MoveGroup result (check result.error_code).
+
+        For execution move_group always plans from the current state and ignores an explicit
+        start state (e.g. one clamped onto the joint limits by _start_state). Such a request is
+        therefore planned first and the planned trajectory executed afterwards; move_group's
+        allowed_start_tolerance (0.01 rad) still rejects a start that does not match the robot.
+        """
+        if not plan_only and not request.start_state.is_diff:
+            planned = self._send(self._move_client, self._move_goal(request, plan_only=True))
+            if planned.error_code.val != MoveItErrorCodes.SUCCESS:
+                return planned
+            goal = ExecuteTrajectory.Goal()
+            goal.trajectory = planned.planned_trajectory
+            executed = self._send(self._execute_client, goal)
+            planned.error_code = executed.error_code
+            planned.executed_trajectory = planned.planned_trajectory
+            return planned
+        return self._send(self._move_client, self._move_goal(request, plan_only))
+
+    @staticmethod
+    def _move_goal(request, plan_only):
         goal = MoveGroup.Goal()
         goal.request = request
         goal.planning_options = PlanningOptions(plan_only=plan_only)
         # no changes to the planning scene (an empty, non-diff scene would mean "replace it")
         goal.planning_options.planning_scene_diff.is_diff = True
         goal.planning_options.planning_scene_diff.robot_state.is_diff = True
-        handle = wait_for(self._move_client.send_goal_async(goal), timeout=10.0)
+        return goal
+
+    def _send(self, client, goal):
+        """Send an action goal, remember it for cancel(), wait for and return its result."""
+        handle = wait_for(client.send_goal_async(goal), timeout=10.0)
         if not handle.accepted:
-            raise MotionError('MoveGroup goal rejected')
+            raise MotionError(f'{type(goal).__name__} rejected')
         with self._goal_lock:
             self._goal_handle = handle
         try:

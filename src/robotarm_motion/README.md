@@ -83,6 +83,17 @@ rclpy.shutdown()
 It never disarms. Disarming deactivates the hardware, and on the real robot that must be a
 conscious operator decision.
 
+## Start state at a joint limit
+
+MoveIt refuses to plan from a state outside the joint limits, even by a fraction of a mrad (a joint
+resting on its limit, e.g. the limp arm in the MuJoCo sim). `MoveItClient` therefore checks the
+current `/joint_states` against the limits in `/robot_description`. A joint at most 0.01 rad
+outside (`START_STATE_CLAMP_TOLERANCE`) is clamped 1 µrad inside the limit and the request gets
+this explicit start state. move_group ignores the start state of a request it executes itself, so
+such a request is planned first and the trajectory then sent to `/execute_trajectory`; its start
+tolerance (0.01 rad) accepts the small difference. A joint further outside is not touched: MoveIt
+then reports `START_STATE_INVALID`, and the joint has to be moved back by hand (jogging).
+
 ## demo_motions
 
 | Motion | Planner |
