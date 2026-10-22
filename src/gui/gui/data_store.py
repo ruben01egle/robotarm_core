@@ -25,8 +25,18 @@ class GuiDataStore:
         self.joint_limits = list()
         # Root-Link der URDF (Basis-Frame für die TCP-Pose), None bis die URDF gelesen wurde
         self.base_frame = None
-        # (max_linear_velocity [m/s], max_angular_velocity [rad/s]) vom cartesian_jog_controller
-        self.cartesian_limits = None
+        # Je Jog-Controller-Instanz: name -> (max_linear_velocity [m/s], max_angular_velocity [rad/s])
+        self.cartesian_limits = {}
+        # Namen der im controller_manager geladenen Controller, None bis zur ersten Abfrage
+        self.loaded_controllers = None
+
+        # Steifigkeit des cartesian_impedance_controller, wie vom Controller verwendet ("committed").
+        # dict mit 'frame', 'linear', 'angular', 'max_linear', 'max_angular' oder None bis gelesen
+        self.stiffness = None
+        # Zähler, damit die GUI Änderungen (Lesen, /parameter_events, Apply) erkennt
+        self.stiffness_version = 0
+        # Ergebnis des letzten Apply: (successful, reason) oder None, wird von der GUI abgeholt
+        self.stiffness_apply_result = None
 
         # 3. Log-Nachrichten aus der ROS-Welt
         self.log_queue = deque(maxlen=50)
@@ -41,7 +51,11 @@ class GuiDataStore:
             self.active_controllers = ""
             self.joint_limits = list()
             self.base_frame = None
-            self.cartesian_limits = None
+            self.cartesian_limits = {}
+            self.loaded_controllers = None
+            self.stiffness = None
+            self.stiffness_version += 1
+            self.stiffness_apply_result = None
             self.frames.clear()
             self.cart_frames.clear()
             self.log_queue.clear()
@@ -99,13 +113,49 @@ class GuiDataStore:
         with self._lock:
             return self.base_frame
 
-    def set_cartesian_limits(self, max_linear: float, max_angular: float):
+    def set_cartesian_limits(self, controller: str, max_linear: float, max_angular: float):
         with self._lock:
-            self.cartesian_limits = (max_linear, max_angular)
+            self.cartesian_limits[controller] = (max_linear, max_angular)
 
     def get_cartesian_limits(self):
+        """dict: Controller-Name -> (max_linear, max_angular), nur bereits gelesene Instanzen."""
         with self._lock:
-            return self.cartesian_limits
+            return dict(self.cartesian_limits)
+
+    def set_loaded_controllers(self, names):
+        with self._lock:
+            self.loaded_controllers = set(names)
+
+    def get_loaded_controllers(self):
+        """Set der geladenen Controller oder None, solange der controller_manager nicht abgefragt wurde."""
+        with self._lock:
+            return None if self.loaded_controllers is None else set(self.loaded_controllers)
+
+    def update_stiffness(self, values: dict):
+        """Übernimmt (Teil-)Werte der committed Steifigkeit, z.B. aus get_parameters oder /parameter_events."""
+        with self._lock:
+            if self.stiffness is None:
+                # Partielle Events vor dem ersten vollständigen Lesen ignorieren
+                if not all(k in values for k in ('frame', 'linear', 'angular', 'max_linear', 'max_angular')):
+                    return
+                self.stiffness = {}
+            self.stiffness.update(values)
+            self.stiffness_version += 1
+
+    def get_stiffness(self):
+        """(version, dict oder None)"""
+        with self._lock:
+            return self.stiffness_version, (dict(self.stiffness) if self.stiffness else None)
+
+    def set_stiffness_apply_result(self, successful: bool, reason: str):
+        with self._lock:
+            self.stiffness_apply_result = (successful, reason)
+
+    def pop_stiffness_apply_result(self):
+        with self._lock:
+            result = self.stiffness_apply_result
+            self.stiffness_apply_result = None
+            return result
 
     def set_status(self, state, connected, armed, stopped, active_nodes, active_controllers):
         with self._lock:
@@ -168,6 +218,11 @@ class GuiDataStore:
                 "active_nodes": self.active_nodes,
                 "active_controllers": self.active_controllers
             }
+
+    def get_active_controller_list(self) -> list:
+        """active_controllers des control_center (", "-getrennt) als Liste."""
+        with self._lock:
+            return [name.strip() for name in self.active_controllers.split(",") if name.strip()]
     
     # --- Live-Getter für dein JointJogWidget ---
     def get_current_positions(self) -> list:

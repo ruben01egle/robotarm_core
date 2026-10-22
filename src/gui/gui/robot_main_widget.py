@@ -1,12 +1,15 @@
-from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, 
+from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QScrollArea, QFrame, QSizePolicy,
                              QHBoxLayout, QPushButton, QStackedWidget, QTextEdit)
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QTextCursor
 
 # Deine Widgets importieren
 from .telemetry_widget import TelemetryDashboard
 from .joint_jog_widget import JointJogWidget
 from .cartesian_jog_widget import CartesianJogWidget
+from .compliance_widget import ComplianceWidget
+from .stiffness_widget import StiffnessWidget
+from .controller_modes import COMPLIANT
 from .control_header_widget import ControlHeader
 
 class RobotMainWindow(QMainWindow):
@@ -35,16 +38,35 @@ class RobotMainWindow(QMainWindow):
         self.left_column_layout.setContentsMargins(0, 0, 0, 0)
 
         self.control_stack = QStackedWidget()
-        self.control_stack.setFixedWidth(400) 
         
         self.joint_page = JointJogWidget(self.data_store, self.node)
         self.cartesian_page = CartesianJogWidget(self.data_store, self.node)
+        self.compliance_page = ComplianceWidget(self.data_store, self.node)
+        self.pages = [self.joint_page, self.cartesian_page, self.compliance_page]
         
-        self.control_stack.addWidget(self.joint_page)
-        self.control_stack.addWidget(self.cartesian_page)
+        for page in self.pages:
+            self.control_stack.addWidget(page)
+
+        # Steifigkeit: ein gemeinsames Panel unter dem Stack, da die Navigation während einer Mission gesperrt ist
+        self.stiffness_panel = StiffnessWidget(self.data_store, self.node)
+
+        # Seite + Panel scrollen, falls die Höhe nicht reicht (Joint-Seite + ausgeklapptes Panel)
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.addWidget(self.control_stack)
+        scroll_layout.addWidget(self.stiffness_panel)
+        scroll_layout.addStretch()
+
+        self.left_scroll = QScrollArea()
+        self.left_scroll.setWidgetResizable(True)
+        self.left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.left_scroll.setWidget(scroll_content)
 
         self.left_column_layout.addWidget(self.nav_container) 
-        self.left_column_layout.addWidget(self.control_stack)
+        self.left_column_layout.addWidget(self.left_scroll)
+        self.fit_stack_to_page()
         
         # RECHTS: Das neue, selbstverwaltete Dashboard
         self.dashboard = TelemetryDashboard(self.data_store)
@@ -71,11 +93,14 @@ class RobotMainWindow(QMainWindow):
     def init_nav_bar(self):
         """Erstellt die obere Leiste zum Umschalten der linken Control-Seite."""
         self.nav_container = QWidget()
-        self.nav_layout = QVBoxLayout(self.nav_container)
+        # Nebeneinander statt untereinander, spart Höhe für Seite + Steifigkeits-Panel
+        self.nav_layout = QHBoxLayout(self.nav_container)
+        self.nav_layout.setContentsMargins(0, 0, 0, 4)
         
-        self.btn_joint_jog = QPushButton("JOINT JOG")
-        self.btn_cartesian_jog = QPushButton("CARTESIAN JOG")
-        self.nav_buttons = [self.btn_joint_jog, self.btn_cartesian_jog]
+        self.btn_joint_jog = QPushButton("JOINT")
+        self.btn_cartesian_jog = QPushButton("CARTESIAN")
+        self.btn_compliance = QPushButton("COMPLIANCE")
+        self.nav_buttons = [self.btn_joint_jog, self.btn_cartesian_jog, self.btn_compliance]
         
         for idx, btn in enumerate(self.nav_buttons):
             btn.setCheckable(True)
@@ -90,6 +115,7 @@ class RobotMainWindow(QMainWindow):
                         border: 2px solid #2ecc71;
                     }
                     QPushButton:disabled { color: #7f8c8d; }
+                    QPushButton:checked:disabled { color: #dfe6e9; }
                 """)
             # Lambda nutzt hier den Default-Parameter i=idx, um den Scope zu fixieren
             btn.clicked.connect(lambda checked, i=idx: self.switch_gui_mode(i))
@@ -115,14 +141,34 @@ class RobotMainWindow(QMainWindow):
     def switch_gui_mode(self, index):
         """Schaltet nur den linken Control-Stack um."""
         self.control_stack.setCurrentIndex(index)
-        modes = ["JOINT JOG", "CARTESIAN JOG"]
+        self.fit_stack_to_page()
+        # Auf der Compliance-Seite ist das Steifigkeits-Panel der Hauptinhalt
+        self.stiffness_panel.set_expanded(self.control_stack.currentWidget() is self.compliance_page)
+        modes = ["JOINT", "CARTESIAN", "COMPLIANCE"]
         self.log_message(f"Gui Mode changed to: {modes[index]}")
+
+    def fit_stack_to_page(self):
+        """QStackedWidget nimmt sonst die Höhe der größten Seite an, das Panel stünde weit unten."""
+        for page in self.pages:
+            policy = QSizePolicy.Policy.Preferred if page is self.control_stack.currentWidget() else QSizePolicy.Policy.Ignored
+            page.setSizePolicy(QSizePolicy.Policy.Preferred, policy)
+            page.adjustSize()
+
+    def update_stiffness_visibility(self):
+        """Panel nur auf der Compliance-Seite und bei gewähltem Modus Compliant."""
+        page = self.control_stack.currentWidget()
+        visible = page is self.compliance_page or page.execution_mode() == COMPLIANT
+        if visible == self.stiffness_panel.isHidden():
+            self.stiffness_panel.setVisible(visible)
 
     def global_update(self):
         """Zentraler Timer-Aufruf. Das Dashboard aktualisiert alle seine Tiles selbst."""
         self.dashboard.update_all()
         self.joint_page.update_widget()
         self.cartesian_page.update_widget()
+        self.compliance_page.update_widget()
+        self.stiffness_panel.update_widget()
+        self.update_stiffness_visibility()
         self.control_header.update_status()
         self.update_nav_lock()
         self.log_update()

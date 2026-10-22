@@ -138,10 +138,12 @@ class ControlCenterNode(Node):
             callback_group=self.multithread_cb_group
         )
 
-        self.active_controller = None
+        # Controller-Set der Mission, wird in einem einzigen Switch-Request (de)aktiviert,
+        # z.B. [cartesian_impedance_controller, joint_stream_controller_impedance] bei Chaining
+        self.active_controllers = []
         self.active_node = None
 
-        # Controller-Überwachung: erkennt, wenn der controller_manager den Mission-Controller
+        # Controller-Überwachung: erkennt, wenn der controller_manager einen Mission-Controller
         # selbstständig deaktiviert (z.B. durch einen Fehler im Controller)
         self.switching_controller = False
         self.controller_check_pending = False
@@ -238,15 +240,19 @@ class ControlCenterNode(Node):
 
     def on_enter_mission_before(self, event_data):
         node_name = event_data.kwargs.get('node_name', 'unknown_node')
-        controller_name = event_data.kwargs.get('controller_name', 'default')
+        controller_names = list(event_data.kwargs.get('controller_names', []))
 
-        self.get_logger().info(f"Preparing mission for node '{node_name}'. Activating controller '{controller_name}'...")
+        if not controller_names:
+            raise RuntimeError(f"Rejected: node '{node_name}' requested a mission without controllers.")
+
+        self.get_logger().info(f"Preparing mission for node '{node_name}'. Activating controllers {controller_names}...")
 
         if not self.switch_ctrl_client.wait_for_service(timeout_sec=1.0):
             raise RuntimeError("Service '/controller_manager/switch_controller' not active!")
 
+        # Alle Controller des Sets in EINEM Request (STRICT: ganz oder gar nicht)
         request = SwitchController.Request()
-        request.activate_controllers = [controller_name]
+        request.activate_controllers = controller_names
         request.deactivate_controllers = []
         request.strictness = SwitchReq.STRICT
         request.activate_asap = True
@@ -260,30 +266,30 @@ class ControlCenterNode(Node):
 
             response = future.result()
             if response is None or not response.ok:
-                raise RuntimeError(f"Failed to activate controller: {controller_name}")
+                raise RuntimeError(f"Failed to activate controllers: {controller_names}")
 
             self.active_node = node_name
-            self.active_controller = controller_name
+            self.active_controllers = controller_names
         finally:
             self.switching_controller = False
-        self.get_logger().info(f"Successfully activated controller '{controller_name}' for mission.")
+        self.get_logger().info(f"Successfully activated controllers {controller_names} for mission.")
 
     def on_exit_mission_before(self, event_data):
         node_name = event_data.kwargs.get('node_name', 'unknown_node')
-        controller_name = event_data.kwargs.get('controller_name', 'default')
         
         if self.active_node != node_name:
             raise RuntimeError(f"Rejected: active node is {self.active_node}. You ({node_name}) cannot stop this mission.")
             
-        if self.active_controller:
-            self.get_logger().info(f"Stopping active mission controller '{self.active_controller}'...")
+        if self.active_controllers:
+            self.get_logger().info(f"Stopping active mission controllers {self.active_controllers}...")
             
             if not self.switch_ctrl_client.wait_for_service(timeout_sec=1.0):
                 raise RuntimeError("Service '/controller_manager/switch_controller' not active!")
 
+            # Ganzes Set in einem Request, Chaining erlaubt kein einzelnes Abschalten des Downstreams
             request = SwitchController.Request()
             request.activate_controllers = []
-            request.deactivate_controllers = [self.active_controller]
+            request.deactivate_controllers = list(self.active_controllers)
             request.strictness = SwitchReq.STRICT
 
             self.switching_controller = True
@@ -295,20 +301,20 @@ class ControlCenterNode(Node):
 
                 response = future.result()
                 if response is None or not response.ok:
-                    raise RuntimeError(f"Failed to deactivate controller: {self.active_controller}")
+                    raise RuntimeError(f"Failed to deactivate controllers: {self.active_controllers}")
 
                 # Noch innerhalb des Flags zurücksetzen, damit der Monitor keinen Fehlalarm auslöst
-                self.active_controller = None
+                self.active_controllers = []
             finally:
                 self.switching_controller = False
 
         self.active_node = None
-        self.active_controller = None
-        self.get_logger().info("Mission controller successfully stopped.")
+        self.active_controllers = []
+        self.get_logger().info("Mission controllers successfully stopped.")
 
     def controller_monitor_cb(self):
-        """Fragt zyklisch ab, ob der Mission-Controller noch aktiv ist."""
-        if self.state != SystemState.MISSION or not self.active_controller:
+        """Fragt zyklisch ab, ob alle Controller der Mission noch aktiv sind."""
+        if self.state != SystemState.MISSION or not self.active_controllers:
             return
         if self.switching_controller or self.controller_check_pending:
             return
@@ -316,11 +322,11 @@ class ControlCenterNode(Node):
             return
 
         self.controller_check_pending = True
-        expected_controller = self.active_controller
+        expected_controllers = list(self.active_controllers)
         future = self.list_ctrl_client.call_async(ListControllers.Request())
-        future.add_done_callback(lambda f: self.controller_monitor_response_cb(f, expected_controller))
+        future.add_done_callback(lambda f: self.controller_monitor_response_cb(f, expected_controllers))
 
-    def controller_monitor_response_cb(self, future, expected_controller):
+    def controller_monitor_response_cb(self, future, expected_controllers):
         try:
             response = future.result()
             if response is None:
@@ -328,29 +334,36 @@ class ControlCenterNode(Node):
 
             # Zustand könnte sich während der Abfrage geändert haben (z.B. regulärer Disengage)
             if (self.state != SystemState.MISSION or self.switching_controller
-                    or self.active_controller != expected_controller):
+                    or self.active_controllers != expected_controllers):
                 return
 
-            ctrl_state = "not loaded"
-            for ctrl in response.controller:
-                if ctrl.name == expected_controller:
-                    ctrl_state = ctrl.state
-                    break
+            states = {ctrl.name: ctrl.state for ctrl in response.controller}
+            lost = {name: states.get(name, "not loaded") for name in expected_controllers
+                    if states.get(name) != "active"}
 
-            if ctrl_state != "active":
-                self.controller_lost(controller_state=ctrl_state) # type: ignore
+            if lost:
+                still_active = [name for name in expected_controllers if name not in lost]
+                self.controller_lost(lost=lost, still_active=still_active) # type: ignore
         except Exception as e:
             self.get_logger().error(f"Controller monitor failed: {e}", throttle_duration_sec=2.0)
         finally:
             self.controller_check_pending = False
 
     def on_controller_lost_before(self, event_data):
-        ctrl_state = event_data.kwargs.get('controller_state', 'unknown')
+        lost = event_data.kwargs.get('lost', {})
+        still_active = event_data.kwargs.get('still_active', [])
+        lost_text = ", ".join(f"'{name}' ({state})" for name, state in lost.items())
         self.get_logger().error(
-            f"Controller '{self.active_controller}' left active state unexpectedly (state: {ctrl_state}). "
+            f"Controller {lost_text} left active state unexpectedly. "
             f"Mission of '{self.active_node}' aborted. See controller_manager log for reason.")
+
+        # Rest des Sets mit abschalten, damit immer ein definierter Zustand (ARMED, Antriebe halten) entsteht
+        if still_active:
+            self.active_controllers = still_active
+            self.deactivate_active_controller()
+
         self.active_node = None
-        self.active_controller = None
+        self.active_controllers = []
 
     def on_enter_stop(self, event_data=None):
         self.get_logger().warn("STOP INVOKED: Deactivating all active controllers for safety...")
@@ -404,7 +417,7 @@ class ControlCenterNode(Node):
 
         try:
             if (request.action_id == RequestAction.Request.ACTION_MISSION):
-                getattr(self, trigger_fctn)(node_name=request.node_name, controller_name=request.controller_names)
+                getattr(self, trigger_fctn)(node_name=request.node_name, controller_names=list(request.controller_names))
             else:
                 getattr(self, trigger_fctn)()
 
@@ -427,7 +440,7 @@ class ControlCenterNode(Node):
             msg.armed = self.state in [SystemState.ARMED, SystemState.MISSION]
             msg.stopped = self.state in [SystemState.STOP]
             
-            msg.active_controllers = self.active_controller if self.active_controller else ""
+            msg.active_controllers = ", ".join(self.active_controllers)
             msg.active_nodes = self.active_node if self.active_node else ""
 
             self.status_pub.publish(msg)
@@ -436,12 +449,12 @@ class ControlCenterNode(Node):
             self.get_logger().error(f"Error publishing system state: {e}", throttle_duration_sec=2.0)
 
     def deactivate_active_controller(self, blocking=False):
-        """Helper method to turn off the currently running controller immediately."""
-        if not self.active_controller:
+        """Helper method to turn off the currently running controller set immediately."""
+        if not self.active_controllers:
             self.get_logger().info("No active controller running. System is already stationary.")
             return
 
-        self.get_logger().info(f"Safety shutdown: Deactivating controller '{self.active_controller}'...")
+        self.get_logger().info(f"Safety shutdown: Deactivating controllers {self.active_controllers}...")
 
         if not self.switch_ctrl_client.service_is_ready():
             self.get_logger().error("Service '/controller_manager/switch_controller' not ready!")
@@ -449,16 +462,16 @@ class ControlCenterNode(Node):
 
         request = SwitchController.Request()
         request.activate_controllers = []
-        request.deactivate_controllers = [self.active_controller]
+        request.deactivate_controllers = list(self.active_controllers)
         request.strictness = SwitchReq.BEST_EFFORT 
 
         try:
             if blocking:
                 response = self.switch_ctrl_client.call(request)
                 if response is None or not response.ok:
-                    self.get_logger().error(f"Failed to deactivate controller '{self.active_controller}'!")
+                    self.get_logger().error(f"Failed to deactivate controllers {self.active_controllers}!")
                 else:
-                    self.get_logger().info(f"Successfully deactivated controller '{self.active_controller}'.")
+                    self.get_logger().info(f"Successfully deactivated controllers {self.active_controllers}.")
             else:
                 rate = self.create_rate(20)
                 future = self.switch_ctrl_client.call_async(request)
@@ -467,15 +480,15 @@ class ControlCenterNode(Node):
                     
                 response = future.result()
                 if response is None or not response.ok:
-                    self.get_logger().error(f"Failed to deactivate controller '{self.active_controller}'!")
+                    self.get_logger().error(f"Failed to deactivate controllers {self.active_controllers}!")
                 else:
-                    self.get_logger().info(f"Successfully deactivated controller '{self.active_controller}'. Hardware stopped.")
+                    self.get_logger().info(f"Successfully deactivated controllers {self.active_controllers}. Hardware stopped.")
                 
         except Exception as e:
             self.get_logger().error(f"Exception during safety controller switch: {e}")
 
         self.active_node = None
-        self.active_controller = None
+        self.active_controllers = []
 
     def perform_cleanup(self):
         """
