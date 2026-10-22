@@ -2,7 +2,7 @@
 
 This file contains a patch for **robotarm_firmware_lnx** (the RT PC repository). It adds the
 `joint_trajectory_controller` that executes the trajectories planned by MoveIt. Without it, MoveIt
-can plan for the real robot (and the firmware mock) but cannot execute anything.
+can plan for the real robot (and the firmware mock or MuJoCo sim) but cannot execute anything.
 
 It is stored here because the change could not be pushed to the firmware repository (no write
 access). Once it has been applied there, this file can be deleted.
@@ -10,15 +10,15 @@ access). Once it has been applied there, this file can be deleted.
 | | |
 |---|---|
 | Target repository | `robotarm_firmware_lnx` |
-| Base commit | `e5bfe6a` ("test updated, cleanup and readme", firmware `main` on 2026-10-10) |
-| Tested | Applied to `e5bfe6a`; built; tested end to end with `robotarm_mock.launch.py`, control_center and MoveIt (see the README of `robotarm_moveit_config`, section 9) |
+| Base commit | `705ac5d` ("added mujoco position and velocity interface ...", firmware `main` on 2026-10-22) |
+| Tested | Applied to `705ac5d`; built; tested end to end with the firmware mock and the MuJoCo sim, control_center and MoveIt (see the README of `robotarm_moveit_config`, section 9) |
 
 ## What the patch changes
 
 | File | Change |
 |---|---|
-| `src/robotarm_bringup/config/controllers.yaml` | Registers `joint_trajectory_controller`: joints `axis1..axis6`, command interfaces `position` + `velocity` (PVC mode of `moteus_interface`, like the jog controllers), tracking tolerances that abort a goal if a joint deviates more than 0.1 rad while moving or 0.01 rad at the goal (PRELIMINARY, tune on hardware) |
-| `src/robotarm_bringup/launch/robotarm.launch.py` | Spawns it `--inactive`; control_center activates it for a mission (`RequestAction`, `ACTION_MISSION`, `controller_names: joint_trajectory_controller`) |
+| `src/robotarm_bringup/config/controllers.yaml` | Registers `joint_trajectory_controller`: joints `axis1..axis6`, command interfaces `position` + `velocity` (PVC mode of `moteus_interface`, the same interfaces as joint stream and Cartesian jog), tracking tolerances that abort a goal if a joint deviates more than 0.1 rad while moving or 0.01 rad at the goal (PRELIMINARY, tune on hardware) |
+| `src/robotarm_bringup/launch/controllers.launch.py` | Adds it to `INACTIVE_CONTROLLERS`, so hardware, mock and MuJoCo sim load it inactive like the other motion controllers; control_center activates it for a mission (`RequestAction`, `ACTION_MISSION`, `controller_names: [joint_trajectory_controller]`) |
 | `src/robotarm_bringup/package.xml` | `exec_depend` on `joint_trajectory_controller` |
 | `README.md` | Documents the new controller |
 
@@ -27,7 +27,7 @@ The controller name and joints must match `config/moveit_controllers.yaml` in
 
 ## How to apply
 
-In a clone of `robotarm_firmware_lnx` at `e5bfe6a` or later (it still applies if the four files
+In a clone of `robotarm_firmware_lnx` at `705ac5d` or later (it still applies if the four files
 did not change in the meantime):
 
 ```bash
@@ -55,73 +55,49 @@ ros2 control list_controllers   # joint_trajectory_controller ... inactive
 
 ````diff
 diff --git a/README.md b/README.md
-index 2ab02c4..8dee029 100644
+index 2af3e48..8949ac6 100644
 --- a/README.md
 +++ b/README.md
-@@ -27,8 +27,7 @@ This repo is for anyone building or maintaining the actual hardware-interfacing
- firmware: the `ros2_control` hardware plugin, the motion controllers, and the
- launch/config that brings them up on the real-time PC.
- 
--**Current state:** the arm currently has 3 configured joints (`axis1`/`axis2`/
--`axis3`), but nothing here is hardcoded to that number — `moteus_interface`,
-+**Current state:** the arm has 6 configured joints (`axis1` … `axis6`), but nothing here is hardcoded to that number — `moteus_interface`,
- `robotarm_controllers`, and `robotarm_bringup` are all written generically
- against whatever joints are declared in the URDF and config. Adding an axis is
- meant to be a matter of adding a joint to `robotarm_description`'s URDF/Xacro and
-@@ -148,10 +147,16 @@ graph TD
+@@ -150,10 +150,13 @@ graph TD
  - `joint_state_broadcaster` (stock `ros2_controllers` package) — publishes
    `/joint_states` at a configurable rate.
  
 -There is currently no trajectory-following controller (e.g. a standard
 -`joint_trajectory_controller`) wired up in this repo — motion today is driven
--through the reactive `TeleopController` and `CartesianJogController` only. More controller options are
+-through the reactive `JointStreamController` and `CartesianJogController` only. More controller options are
 -expected as the project develops.
 +- `joint_trajectory_controller` (stock `ros2_controllers` package) — executes
 +  joint trajectories received on the `~/follow_joint_trajectory` action
 +  (`control_msgs/action/FollowJointTrajectory`), e.g. planned by MoveIt on the
-+  high-level PC. Claims `position`+`velocity` like `TeleopController` and
-+  `CartesianJogController`, so only one of the three can be active. Aborts a
-+  goal if the tracking error exceeds the `constraints` in `controllers.yaml`.
-+
-+`TeleopController`, `CartesianJogController` and `joint_trajectory_controller`
-+are spawned inactive and are activated by the high-level PC (control_center)
-+when a mission starts.
++  high-level PC. Outputs `position`+`velocity` like `joint_stream_controller`
++  and `cartesian_jog_controller`, so only one of the three can be active. Aborts
++  a goal if the tracking error exceeds the `constraints` in `controllers.yaml`.
++  Activated by the high-level PC (control_center) for a mission, like the others.
  
  ## Usage / Getting Started
  
-@@ -204,8 +209,8 @@ ros2 launch robotarm_bringup robotarm_hardware.launch.py
- 
- Both are thin wrappers around `robotarm.launch.py` (only `use_hardware`
- differs) and start `ros2_control_node`, `robot_state_publisher`, and spawn
--`joint_state_broadcaster`, `teleop_controller` and `cartesian_jog_controller`
--(the latter two inactive — activate one of them explicitly once you're ready to
-+`joint_state_broadcaster`, `teleop_controller`, `cartesian_jog_controller` and
-+`joint_trajectory_controller` (the latter three inactive — activate one of them explicitly once you're ready to
- send motion commands, e.g.
- `ros2 control switch_controllers --activate cartesian_jog_controller`). The hardware
- component (real or mock) boots disarmed and has to be activated
-@@ -249,10 +254,10 @@ carries several honest rough edges:
+@@ -260,10 +263,10 @@ carries several honest rough edges:
    (official mjbots fdcanusb only, no SocketCAN), no retry/checksum logic, and a
    project-specific secondary-encoder homing workaround. Details and caveats are
    in its own README.
--- **Only reactive controllers exist today** (`TeleopController`,
+-- **Only reactive controllers exist today** (`JointStreamController`,
 -  `CartesianJogController`); there's no trajectory-following controller in this
 -  repo yet, and more controller options
 -  are planned as the project develops.
-+- **Three motion controllers exist today**: `TeleopController` and
-+  `CartesianJogController` (reactive) and the stock `joint_trajectory_controller`
-+  (MoveIt trajectories); more controller options are planned as the project
-+  develops.
++- **Motion controllers today**: the reactive `JointStreamController` and
++  `CartesianJogController`, the Cartesian impedance / gravity compensation
++  controllers, and the stock `joint_trajectory_controller` for MoveIt
++  trajectories; more controller options are planned as the project develops.
  - **Joint count is a current-state fact, not a design limit.** The arm has 6
    configured joints today; `moteus_interface`, `robotarm_controllers`, and
    `robotarm_bringup` are all written to be driven by whatever's declared in the
 diff --git a/src/robotarm_bringup/config/controllers.yaml b/src/robotarm_bringup/config/controllers.yaml
-index fcc518b..ba98e8e 100644
+index 9970457..afaf7d4 100644
 --- a/src/robotarm_bringup/config/controllers.yaml
 +++ b/src/robotarm_bringup/config/controllers.yaml
-@@ -69,6 +69,11 @@ controller_manager:
-     cartesian_jog_controller:
-       type: robotarm_controllers/CartesianJogController
+@@ -78,6 +78,11 @@ controller_manager:
+     cartesian_impedance_controller:
+       type: robotarm_controllers/CartesianImpedanceController
  
 +    # Executes trajectories planned by MoveIt on the high-level PC (FollowJointTrajectory action
 +    # ~/follow_joint_trajectory). Spawned inactive; activated by control_center for a mission.
@@ -131,10 +107,10 @@ index fcc518b..ba98e8e 100644
  moteus_hardware_system:
    ros__parameters:
      execution_mode: "pipelined"  # pipelined or strict_sequential
-@@ -125,3 +130,39 @@ cartesian_jog_controller:
- 
-     max_increment_linear: 0.003     # m, per axis clamp of one increment step
-     max_increment_angular: 0.0524   # rad (3°), per axis clamp of one increment step
+@@ -243,3 +248,40 @@ cartesian_impedance_controller:
+     cartesian_damping_ratio: 0.7    # unitless, NOT TUNED
+     max_spring_force: 20.0          # N, norm of the translational spring force
+     max_spring_moment: 2.0          # Nm, norm of the rotational spring moment, below the 4 Nm of the wrist motors
 +
 +# Joint names, controller name and action namespace must match moveit_controllers.yaml in
 +# robotarm_core/src/robotarm_moveit_config.
@@ -147,8 +123,9 @@ index fcc518b..ba98e8e 100644
 +      - axis4
 +      - axis5
 +      - axis6
-+    # position + velocity: interpolated position plus velocity feedforward, selects the PVC mode
-+    # of moteus_interface (same as teleop_controller, so both cannot be active at the same time)
++    # position + velocity: interpolated position plus velocity feedforward, the PVC mode of
++    # moteus_interface. Same interfaces as joint_stream_controller and cartesian_jog_controller,
++    # so only one of them can be active.
 +    command_interfaces:
 +      - position
 +      - velocity
@@ -171,30 +148,19 @@ index fcc518b..ba98e8e 100644
 +      axis4: {trajectory: 0.1, goal: 0.01}
 +      axis5: {trajectory: 0.1, goal: 0.01}
 +      axis6: {trajectory: 0.1, goal: 0.01}
-diff --git a/src/robotarm_bringup/launch/robotarm.launch.py b/src/robotarm_bringup/launch/robotarm.launch.py
-index 2001219..9f6f233 100644
---- a/src/robotarm_bringup/launch/robotarm.launch.py
-+++ b/src/robotarm_bringup/launch/robotarm.launch.py
-@@ -77,10 +77,19 @@ def generate_launch_description():
-         output='screen'
-     )
+diff --git a/src/robotarm_bringup/launch/controllers.launch.py b/src/robotarm_bringup/launch/controllers.launch.py
+index bd7f9f5..240abdf 100644
+--- a/src/robotarm_bringup/launch/controllers.launch.py
++++ b/src/robotarm_bringup/launch/controllers.launch.py
+@@ -16,6 +16,8 @@ INACTIVE_CONTROLLERS = [
+     # upstream controllers chained to cartesian_impedance_controller (chain_to in controllers.yaml)
+     'joint_stream_controller_impedance',
+     'cartesian_jog_controller_impedance',
++    # executes trajectories planned by MoveIt on the high-level PC, activated by control_center
++    'joint_trajectory_controller',
+ ]
  
-+    # MoveIt trajectory execution; inactive until control_center activates it for a mission
-+    joint_trajectory_controller_spawner = Node(
-+        package='controller_manager',
-+        executable='spawner',
-+        arguments=['joint_trajectory_controller', '--inactive'],
-+        output='screen'
-+    )
-+
-     return LaunchDescription(declared_arguments + [
-         control_node,
-         robot_state_pub_node,
-         joint_state_broadcaster_spawner,
-         teleop_controller_spawner,
-         cartesian_jog_controller_spawner,
-+        joint_trajectory_controller_spawner,
-     ])
+ 
 diff --git a/src/robotarm_bringup/package.xml b/src/robotarm_bringup/package.xml
 index 3ee8baf..ea74542 100644
 --- a/src/robotarm_bringup/package.xml
