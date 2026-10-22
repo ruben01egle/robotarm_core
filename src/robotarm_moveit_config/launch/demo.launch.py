@@ -13,29 +13,30 @@ robot: both would provide /controller_manager and /joint_states (see README, "Kn
 
 Arguments:
   rviz:=true|false   start RViz (default: true)
+  tool:=<name>       tool on the flange (default: axis_triad), see move_group.launch.py
 """
 
 from pathlib import Path
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from moveit_configs_utils import MoveItConfigsBuilder
 
+DEFAULT_TOOL = 'axis_triad'
 
-def generate_launch_description():
+
+def launch_setup(context):
+    tool = LaunchConfiguration('tool').perform(context)
     moveit_config = (
         MoveItConfigsBuilder('robotarm', package_name='robotarm_moveit_config')
-        .robot_description(mappings={'use_hardware': 'false', 'tool': 'none'})
+        .robot_description(mappings={'use_hardware': 'false', 'tool': tool})
         .to_moveit_configs()
     )
     package_path = Path(moveit_config.package_path)
     ros2_controllers_file = str(package_path / 'config' / 'ros2_controllers.yaml')
-
-    rviz_arg = DeclareLaunchArgument(
-        'rviz', default_value='true', description='Start RViz with the MotionPlanning panel')
 
     # Publishes /tf from /joint_states and the URDF on the /robot_description topic.
     robot_state_publisher_node = Node(
@@ -71,14 +72,24 @@ def generate_launch_description():
 
     move_group_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(str(package_path / 'launch' / 'move_group.launch.py')),
-        launch_arguments={'rviz': LaunchConfiguration('rviz')}.items(),
+        launch_arguments={'rviz': LaunchConfiguration('rviz'), 'tool': tool}.items(),
     )
 
-    return LaunchDescription([
-        rviz_arg,
+    return [
         robot_state_publisher_node,
         ros2_control_node,
         joint_state_broadcaster_spawner,
         joint_trajectory_controller_spawner,
         move_group_launch,
+    ]
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            'rviz', default_value='true', description='Start RViz with the MotionPlanning panel'),
+        DeclareLaunchArgument(
+            'tool', default_value=DEFAULT_TOOL,
+            description='tool on the flange, file in robotarm_description/urdf/tools/'),
+        OpaqueFunction(function=launch_setup),
     ])

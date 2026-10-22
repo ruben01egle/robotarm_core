@@ -34,7 +34,7 @@ Visualization Manager:
         Robot Alpha: 0.5
       Value: true
   Global Options:
-    Fixed Frame: Base_1
+    Fixed Frame: base
   Tools:
     - Class: rviz_default_plugins/Interact
     - Class: rviz_default_plugins/MoveCamera
@@ -50,7 +50,7 @@ Visualization Manager:
         Z: 0.4
       Name: Current View
       Pitch: 0.4
-      Target Frame: Base_1
+      Target Frame: base
       Yaw: 0.8
 Window Geometry:
   Height: 975

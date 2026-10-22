@@ -16,6 +16,7 @@ def generate_launch_description():
     moveit = LaunchConfiguration('moveit')
     rviz = LaunchConfiguration('rviz')
     gui = LaunchConfiguration('gui')
+    tool = LaunchConfiguration('tool')
 
     # MoveIt (move_group) with the MotionPlanning RViz; it replaces the plain RViz below.
     # Needs the RT PC (or the firmware mock) for /joint_states, /tf and joint_trajectory_controller.
@@ -23,7 +24,7 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(moveit_config_share, 'launch', 'move_group.launch.py')
         ),
-        launch_arguments={'rviz': rviz}.items(),
+        launch_arguments={'rviz': rviz, 'tool': tool}.items(),
         condition=IfCondition(moveit)
     )
 
@@ -43,6 +44,8 @@ def generate_launch_description():
                               description='Start RViz (with MotionPlanning panel if moveit:=true)'),
         DeclareLaunchArgument('gui', default_value='true',
                               description='Start the operator GUI'),
+        DeclareLaunchArgument('tool', default_value='axis_triad',
+                              description='Tool on the flange for MoveIt, must match the RT PC'),
 
         Node(
             package='control_center',

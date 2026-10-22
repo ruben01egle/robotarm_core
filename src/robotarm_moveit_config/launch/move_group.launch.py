@@ -9,18 +9,23 @@ launch/demo.launch.py includes this file and adds a mock ros2_control stack for 
 
 Arguments:
   rviz:=true|false   start RViz (default: true)
+  tool:=<name>       tool on the flange, file in robotarm_description/urdf/tools/ without .xacro
+                     (default: axis_triad, as on the RT PC; "none" = tcp on the flange)
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from moveit_configs_utils import MoveItConfigsBuilder
 
+DEFAULT_TOOL = 'axis_triad'
 
-def generate_launch_description():
-    # Collects all MoveIt parameters from this package (see README, "File overview"):
+
+def load_moveit_config(tool):
+    """Collect all MoveIt parameters of this package for the given tool."""
+    # Sources (see README, "File overview"):
     #   URDF    <- robotarm_description (path and xacro args from .setup_assistant)
     #   SRDF    <- config/robotarm.srdf
     #   IK      <- config/kinematics.yaml
@@ -32,8 +37,9 @@ def generate_launch_description():
         # use_hardware only selects the ros2_control plugin in the URDF; move_group ignores the
         # ros2_control block, so the mock variant is fine here, also for the real robot.
         # tool: file in robotarm_description/urdf/tools/ that is mounted on the flange and defines
-        # the tcp link ("none" = tcp on the flange). Must match the tool used on the RT PC.
-        .robot_description(mappings={'use_hardware': 'false', 'tool': 'none'})
+        # the tcp link. Must match the tool used on the RT PC, otherwise the tcp is in the wrong
+        # place. The collision matrix in the SRDF was generated for DEFAULT_TOOL.
+        .robot_description(mappings={'use_hardware': 'false', 'tool': tool})
         # moveit_manage_controllers=False: MoveIt never switches ros2_control controllers,
         # control_center does (mission request).
         .trajectory_execution(
@@ -46,9 +52,11 @@ def generate_launch_description():
         )
         .to_moveit_configs()
     )
+    return moveit_config
 
-    rviz_arg = DeclareLaunchArgument(
-        'rviz', default_value='true', description='Start RViz with the MotionPlanning panel')
+
+def launch_setup(context):
+    moveit_config = load_moveit_config(LaunchConfiguration('tool').perform(context))
 
     move_group_node = Node(
         package='moveit_ros_move_group',
@@ -84,8 +92,15 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('rviz')),
     )
 
+    return [move_group_node, rviz_node]
+
+
+def generate_launch_description():
     return LaunchDescription([
-        rviz_arg,
-        move_group_node,
-        rviz_node,
+        DeclareLaunchArgument(
+            'rviz', default_value='true', description='Start RViz with the MotionPlanning panel'),
+        DeclareLaunchArgument(
+            'tool', default_value=DEFAULT_TOOL,
+            description='tool on the flange, file in robotarm_description/urdf/tools/'),
+        OpaqueFunction(function=launch_setup),
     ])
