@@ -52,6 +52,8 @@ class RobotMainWindow(QMainWindow):
 
         # Seite + Panel scrollen, falls die Höhe nicht reicht (Joint-Seite + ausgeklapptes Panel)
         scroll_content = QWidget()
+        # Nie breiter als der Viewport (kein horizontales Scrollen), lange Inhalte werden umbrochen/abgeschnitten
+        scroll_content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setContentsMargins(0, 0, 0, 0)
         scroll_layout.addWidget(self.control_stack)
