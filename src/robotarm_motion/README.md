@@ -30,7 +30,7 @@ sequenceDiagram
     participant MG as move_group
     participant JTC as joint_trajectory_controller<br/>(RT PC)
     Note over CC: state ARMED (operator armed the robot)
-    C->>CC: RequestAction(ACTION_MISSION, TYPE_START,<br/>controller_names="joint_trajectory_controller")
+    C->>CC: RequestAction(ACTION_MISSION, TYPE_START,<br/>controller_names=["joint_trajectory_controller"])
     CC->>JTC: switch_controller(activate)
     CC-->>C: success (state MISSION)
     C->>MG: MoveGroup goal (plan + execute)
@@ -77,6 +77,8 @@ executor.shutdown()
 rclpy.shutdown()
 ```
 
+`ControlCenterMission(..., controllers=[...])` selects the controller set (default
+`['joint_trajectory_controller']`; control_center activates the whole list in one switch request).
 `ControlCenterMission(..., arm=True)` also arms the hardware if control_center is only CONNECTED.
 It never disarms. Disarming deactivates the hardware, and on the real robot that must be a
 conscious operator decision.

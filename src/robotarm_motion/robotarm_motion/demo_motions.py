@@ -3,7 +3,7 @@ Plan and execute test motions through move_group.
 
   (a) OMPL:      plan + execute to the named state "ready"
   (b) Pilz PTP:  plan + execute back to "home"
-  (c) Pilz LIN:  plan a straight TCP motion of +5 cm in z (Base_1 frame), starting at "ready".
+  (c) Pilz LIN:  plan a straight TCP motion of +5 cm in z (base frame), starting at "ready".
                  Plan only by default (start state given explicitly, the robot does not move);
                  with --execute-lin the robot moves PTP to "ready", executes the LIN and returns
                  home.

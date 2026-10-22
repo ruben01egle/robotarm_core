@@ -4,7 +4,7 @@ control_center mission handshake for MoveIt motions.
 On the real robot (and the firmware mock) the joint_trajectory_controller is inactive until
 control_center activates it. A MoveIt client therefore has to:
 
-  1. request ACTION_MISSION / TYPE_START with controller_names="joint_trajectory_controller"
+  1. request ACTION_MISSION / TYPE_START with controller_names=["joint_trajectory_controller"]
      (only possible while control_center is ARMED),
   2. send its MoveIt goals,
   3. request ACTION_MISSION / TYPE_STOP with the same node_name.
@@ -39,9 +39,9 @@ class MissionAborted(MissionError):
 
 
 class ControlCenterMission:
-    """Context manager for a control_center mission with one ros2_control controller."""
+    """Context manager for a control_center mission with a set of ros2_control controllers."""
 
-    def __init__(self, node, moveit, controller='joint_trajectory_controller', arm=False,
+    def __init__(self, node, moveit, controllers=('joint_trajectory_controller',), arm=False,
                  timeout=5.0):
         """
         Prepare the mission; arm=True arms the hardware first if control_center is CONNECTED.
@@ -51,7 +51,8 @@ class ControlCenterMission:
         """
         self.node = node
         self.moveit = moveit
-        self.controller = controller
+        # control_center activates the whole set in one switch request (string[] in the service)
+        self.controllers = [controllers] if isinstance(controllers, str) else list(controllers)
         self.arm = arm
         self.timeout = timeout
         self.state = None
@@ -93,7 +94,7 @@ class ControlCenterMission:
         req.node_name = self.node.get_name()
         req.action_id = action_id
         req.request_type = request_type
-        req.controller_names = self.controller
+        req.controller_names = self.controllers
         res = wait_for(self._client.call_async(req), timeout=self.timeout)
         if not res.success:
             raise MissionError(res.message)
@@ -111,7 +112,7 @@ class ControlCenterMission:
         self._mission_seen = False
         self.active = True
         self._wait_for_state(('MISSION',), self.timeout)
-        self.node.get_logger().info(f'mission started, {self.controller} active')
+        self.node.get_logger().info(f'mission started, {", ".join(self.controllers)} active')
 
     def stop(self):
         """Stop the mission (deactivates the controller); no-op if control_center ended it."""
@@ -123,7 +124,7 @@ class ControlCenterMission:
                 f'mission was ended by control_center ({self.aborted}); nothing to stop')
             return
         self._request(RequestAction.Request.ACTION_MISSION, RequestAction.Request.TYPE_STOP)
-        self.node.get_logger().info(f'mission stopped, {self.controller} inactive')
+        self.node.get_logger().info(f'mission stopped, {", ".join(self.controllers)} inactive')
 
     def check(self):
         """Raise MissionAborted if control_center has ended the mission."""

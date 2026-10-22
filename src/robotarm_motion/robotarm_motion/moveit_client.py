@@ -31,7 +31,7 @@ from shape_msgs.msg import SolidPrimitive
 import yaml
 
 GROUP = 'arm'
-BASE_FRAME = 'Base_1'
+BASE_FRAME = 'base'
 TCP_LINK = 'tcp'
 OMPL = 'ompl'
 PILZ = 'pilz_industrial_motion_planner'
