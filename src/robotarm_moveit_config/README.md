@@ -224,7 +224,9 @@ Standalone demo: `robot_state_publisher`, `ros2_control_node` with **mock hardwa
 ### `launch/move_group.launch.py`
 
 Only `move_group` (+ RViz, `rviz:=true|false`, default `true`; `tool:=<name>`, default
-`axis_triad`, must match the tool on the RT PC). Starts **no** controller_manager and
+`axis_triad`, must match the tool on the RT PC; `use_sim_time:=true` with the MuJoCo sim;
+`allow_trajectory_execution:=false` makes move_group plan only, as `launch_robot.py` does for the
+execution gate). Starts **no** controller_manager and
 **no** robot_state_publisher; use it against the real ros2_control stack. `robot_bringup`'s
 `launch_robot.py` includes it (argument `moveit:=true`, the default). Here all MoveIt
 parameters are assembled with `MoveItConfigsBuilder`, including `moveit_manage_controllers=False`
@@ -379,9 +381,18 @@ Terminal 2, high-level side (this workspace):
 
 ```bash
 source install/setup.bash
-ros2 launch robot_bringup launch_robot.py                 # control_center + move_group + RViz + GUI
-#   options: moveit:=false  rviz:=false  gui:=false  tool:=<name>
+ros2 launch robot_bringup launch_robot.py   # control_center + move_group + motion_server + RViz + GUI
+#   options: moveit:=false  rviz:=false  gui:=false  tool:=<name>  execution_gate:=false
 #   with the MuJoCo sim: use_sim_time:=true (the sim stamps /joint_states with sim time)
+```
+
+By default (`execution_gate:=true`) move_group only **plans**: RViz *Execute* and MoveGroup
+plan + execute do not move the robot. Motions are executed by the `motion_server` of
+[`robotarm_motion`](../robotarm_motion/README.md), the execution gate, which runs each job in its
+own control_center mission:
+
+```bash
+ros2 run robotarm_motion motion init && ros2 run robotarm_motion motion run square
 ```
 
 control_center reaches `CONNECTED` when it sees the controller_manager. Then:
@@ -390,8 +401,8 @@ control_center reaches `CONNECTED` when it sees the controller_manager. Then:
 # arm (the GUI does this with its ARM button)
 ros2 service call /request_action robotarm_interface/srv/RequestAction \
   "{node_name: operator, action_id: 1, request_type: 254}"
-# run MoveIt motions inside a mission (activates joint_trajectory_controller)
-ros2 run robotarm_motion demo_motions --mission --scaling 0.1
+# run MoveIt motions through the gate (the motion_server starts and stops its own mission)
+ros2 run robotarm_motion motion move ready --scaling 0.1
 # STOP (e.g. during a motion), and leave STOP again
 ros2 service call /request_action robotarm_interface/srv/RequestAction \
   "{node_name: operator, action_id: 11, request_type: 254}"
@@ -402,9 +413,11 @@ ros2 service call /request_action robotarm_interface/srv/RequestAction \
 (`action_id`: 1 = ARM, 2 = MISSION, 11 = STOP, 12 = EMERGENCY; `request_type`: 254 = start,
 255 = stop, see `robotarm_interface/srv/RequestAction.srv`.)
 
-Planning in RViz works without a mission; **Execute** fails (`CONTROL_FAILED`, nothing moves)
-unless a mission with `joint_trajectory_controller` is active. To execute from RViz, start the
-mission by hand first:
+Planning in RViz always works. **Execute** in RViz needs `execution_gate:=false` (move_group may
+execute again; then the gate is off, see `robotarm_motion` README) and a mission started by hand,
+otherwise it fails (`CONTROL_FAILED`, nothing moves). With the gate on, move_group only logs
+"not allowed to execute trajectories ... Only a motion plan will be computed" and reports
+SUCCESS for the plan; nothing moves either way:
 
 ```bash
 ros2 service call /request_action robotarm_interface/srv/RequestAction \
@@ -548,6 +561,10 @@ Reference implementations: `kdl_kinematics_plugin` (moveit_kinematics) and pick_
    with `rviz:=`, `gui:=` and `tool:=` arguments.
 8. **Controller sets**: `RequestAction.controller_names` is a list since `robotarm_interface`
    `4aea864`; `ControlCenterMission` sends a list (`controllers=[...]`).
+9. **Goals, programs and the execution gate** (`robotarm_motion`): goals file with joint and
+   Cartesian goals (IK seed), programs (PTP/LIN/OMPL steps, blending, offsets, planned completely
+   before anything moves), `motion` command line, and the `motion_server` as the only executor of
+   MoveIt trajectories in `launch_robot.py` (`execution_gate:=true`).
 
 ### Still open
 
@@ -562,13 +579,12 @@ Reference implementations: `kdl_kinematics_plugin` (moveit_kinematics) and pick_
    apply instructions in [`doc/firmware_joint_trajectory_controller.md`](doc/firmware_joint_trajectory_controller.md)
    (base: firmware `705ac5d`, verified to apply cleanly). Apply it there, or open a pull request
    after getting collaborator access or forking the repository.
-3. **GUI**: there is no button to start a MoveIt mission or to execute from RViz with a mission
-   (manual service calls in section 4 work meanwhile). Planned: goals file, programs and a separate
-   motion GUI in `robotarm_motion`.
-4. **Single execution gate**: a mission locks the controller, not the sender. During a MoveIt
-   mission any other MoveIt client (e.g. *Execute* in RViz) could also execute, and during a jog
-   mission any node publishing to the jog topics moves the arm. Planned: a motion server as the
-   only executor of MoveIt trajectories.
+3. **GUI**: goals, programs and the execution gate exist (`robotarm_motion`, `motion` command
+   line). A separate motion GUI on top of the `motion_server` action is planned.
+4. **Remaining gap of the execution gate**: move_group can no longer execute, but a node that
+   sends `FollowJointTrajectory` goals directly to the controller while the motion_server's mission
+   keeps it active would still move the arm, and during a jog mission any node publishing to the
+   jog topics moves it. Closing that needs access control on the ROS network (SROS2).
 5. **control_center is not enforced**: `ros2 control switch_controllers` bypasses it. The
    controller manager still prevents two controllers on the same interfaces, but control_center
    only notices a lost controller during a mission, not one activated while ARMED.
@@ -861,6 +877,32 @@ Found and fixed on the way:
 - the limp arm rests 0.0005 rad beyond axis2's limit, and every plan was refused
   (`START_STATE_INVALID`). Fixed in `robotarm_motion` (clamp ≤ 0.01 rad, 1 µrad inside the limit, plan
   then execute, because move_group ignores the start state of an executed request). See section 8.
+
+### Goals, programs and the execution gate (2026-10-24)
+
+`robotarm_motion` step 2 (goals file, programs, `motion` command line) and step 3 (`motion_server`).
+Firmware mock and MuJoCo sim with `launch_robot.py` (`execution_gate:=true`, the default), own goals
+file from `config/goals_example.yaml`, `ROS_DOMAIN_ID=42`.
+
+| # | Test | Result |
+|---|---|---|
+| G1 | `motion init`, `motion list` | example goals + SRDF states + programs listed |
+| G2 | `motion run square --plan-only`, robot not armed | planned (1 segment, 19.6 s), robot did not move, no mission |
+| G3 | `motion run square`, not armed | refused: `control_center is CONNECTED, arm the robot first` |
+| G4 | `motion run square` (5 cm square, 1 cm blends) | done, 1 segment, at `ready` (error 6e-5 rad) |
+| G5 | `motion run tour` (blended PTPs, Cartesian goal, LIN with offset, OMPL, PTPs) | done, 3 segments, at `ready` |
+| G6 | `motion teach` (joint and `--cartesian`) at `left`, `motion move home`, `motion move taught_cart` | Cartesian goal reached in the taught configuration (= `left`, error < 1e-5 rad): the seed works |
+| G7 | `demo_motions --mission` (execution through move_group) | nothing moved: move_group only plans (it reports SUCCESS for the plan) |
+| G8 | second job while `tour` runs | rejected; the first job finishes |
+| G9 | STOP during a job | joints frozen; `aborted, control_center switched to STOP` |
+| G10 | Ctrl-C on `motion run` | job cancelled, joints stopped, mission ended (ARMED) |
+| G11 | job while a GUI mission is active | refused (`control_center is MISSION`) |
+| G12 | unknown program / goal | clear error message, nothing moves |
+| S1–S3 | MuJoCo sim: `square` from the limp pose, `tour`, STOP | done (start state clamped onto axis2's limit), at `ready` (error ≤ 2e-4 rad); STOP freezes the arm |
+
+Found on the way: MoveIt 2.12.4's service `/plan_sequence_path` fails every blended Pilz sequence
+("Blending failed"); the action `/sequence_move_group` with `plan_only` plans the same request.
+`robotarm_motion` uses the action. Unit tests: 18 (`test/test_goals.py`) + flake8 + pep257.
 
 ### Not verified here
 
