@@ -8,6 +8,7 @@ from .telemetry_widget import TelemetryDashboard
 from .joint_jog_widget import JointJogWidget
 from .cartesian_jog_widget import CartesianJogWidget
 from .compliance_widget import ComplianceWidget
+from .motion_widget import MotionWidget
 from .stiffness_widget import StiffnessWidget
 from .controller_modes import COMPLIANT
 from .control_header_widget import ControlHeader
@@ -42,7 +43,8 @@ class RobotMainWindow(QMainWindow):
         self.joint_page = JointJogWidget(self.data_store, self.node)
         self.cartesian_page = CartesianJogWidget(self.data_store, self.node)
         self.compliance_page = ComplianceWidget(self.data_store, self.node)
-        self.pages = [self.joint_page, self.cartesian_page, self.compliance_page]
+        self.motion_page = MotionWidget(self.data_store, self.node)
+        self.pages = [self.joint_page, self.cartesian_page, self.compliance_page, self.motion_page]
         
         for page in self.pages:
             self.control_stack.addWidget(page)
@@ -102,7 +104,8 @@ class RobotMainWindow(QMainWindow):
         self.btn_joint_jog = QPushButton("JOINT")
         self.btn_cartesian_jog = QPushButton("CARTESIAN")
         self.btn_compliance = QPushButton("COMPLIANCE")
-        self.nav_buttons = [self.btn_joint_jog, self.btn_cartesian_jog, self.btn_compliance]
+        self.btn_moveit = QPushButton("MOVEIT")
+        self.nav_buttons = [self.btn_joint_jog, self.btn_cartesian_jog, self.btn_compliance, self.btn_moveit]
         
         for idx, btn in enumerate(self.nav_buttons):
             btn.setCheckable(True)
@@ -146,7 +149,7 @@ class RobotMainWindow(QMainWindow):
         self.fit_stack_to_page()
         # Auf der Compliance-Seite ist das Steifigkeits-Panel der Hauptinhalt
         self.stiffness_panel.set_expanded(self.control_stack.currentWidget() is self.compliance_page)
-        modes = ["JOINT", "CARTESIAN", "COMPLIANCE"]
+        modes = ["JOINT", "CARTESIAN", "COMPLIANCE", "MOVEIT"]
         self.log_message(f"Gui Mode changed to: {modes[index]}")
 
     def fit_stack_to_page(self):
@@ -169,6 +172,7 @@ class RobotMainWindow(QMainWindow):
         self.joint_page.update_widget()
         self.cartesian_page.update_widget()
         self.compliance_page.update_widget()
+        self.motion_page.update_widget()
         self.stiffness_panel.update_widget()
         self.update_stiffness_visibility()
         self.control_header.update_status()
