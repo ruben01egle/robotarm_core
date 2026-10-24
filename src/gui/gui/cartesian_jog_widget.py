@@ -174,7 +174,9 @@ class CartesianJogWidget(QWidget):
 
         self.frame_hint = QLabel(FRAME_HINTS[self.frame_id])
         self.frame_hint.setStyleSheet("color: #95a5a6; font-size: 11px;")
-        frame_row.addWidget(self.frame_hint)
+        # Umbrechen statt die Spalte zu verbreitern (Tool-Hinweis ist deutlich länger)
+        self.frame_hint.setWordWrap(True)
+        frame_row.addWidget(self.frame_hint, stretch=1)
         frame_row.addStretch()
         self.main_layout.addLayout(frame_row)
 
