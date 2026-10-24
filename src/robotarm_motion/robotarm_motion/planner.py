@@ -185,11 +185,26 @@ class Planner:
         trajectory = concatenate([t.joint_trajectory for t in res.planned_trajectories])
         return PlannedSegment('pilz', segment.steps, trajectory)
 
-    def plan(self, goal_file, segments, scaling, start_joints):
-        """Plan all segments, each from the end of the previous one; returns PlannedSegments."""
+    def plan(self, goal_file, segments, scaling, start_joints, attempts=2):
+        """
+        Plan all segments, each from the end of the previous one; returns PlannedSegments.
+
+        A segment that fails is planned once more (attempts=2): the IK solver (pick_ik) and OMPL
+        are randomized, and rarely (about 1 in 30 plans of the example square) the IK of a Pilz LIN
+        jumps to another arm configuration in the middle of the line. Pilz then rejects the plan
+        ("Joint velocity limit ... violated"), the second attempt normally succeeds. Only planning
+        is repeated; nothing moves before the whole job has been planned.
+        """
         planned, start = [], dict(start_joints)
         for segment in segments:
-            planned.append(self.plan_segment(goal_file, segment, scaling, start))
+            for attempt in range(1, attempts + 1):
+                try:
+                    planned.append(self.plan_segment(goal_file, segment, scaling, start))
+                    break
+                except MotionError as e:
+                    if attempt == attempts:
+                        raise
+                    self.node.get_logger().warn(f'planning failed ({e}), planning again')
             start = planned[-1].end_joints()
         return planned
 
