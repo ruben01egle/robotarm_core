@@ -30,7 +30,7 @@ The interface of the motion_server (`RunMotion.action`) is in the package
 ```mermaid
 flowchart LR
     subgraph HL["High-level PC"]
-        CLI["motion CLI /<br/>(later) motion GUI"]
+        CLI["motion CLI /<br/>GUI page MOVEIT"]
         RVIZ["RViz<br/>MotionPlanning"]
         MS["motion_server<br/>(execution gate)"]
         MG["move_group<br/>(plans only)"]
@@ -130,6 +130,26 @@ How a program is planned and executed:
    the goals), otherwise Pilz refuses the sequence (`INVALID_MOTION_PLAN`).
 
 CIRC (arcs) is not supported in programs yet (it needs an interim or center point).
+
+## GUI: MOVEIT page
+
+The operator GUI (`gui`) has a page **MOVEIT** next to JOINT, CARTESIAN and COMPLIANCE
+(`gui/gui/motion_widget.py`). It is a client of the motion_server like the command line:
+
+- **Target**: a program (▶) or a goal (●) of the goals file, for a goal also the motion type
+  (PTP/LIN/OMPL); ⟳ reloads the file. The file is the motion_server's (`goals_file` parameter).
+- **Speed Scale**: scaling of the job (5–100 %, default 20 %).
+- **PLAN**: plan only and show the result in RViz, nothing moves (works without arming).
+- **EXECUTE**: plan everything, then execute; enabled only when the robot is ARMED and no other
+  mission (e.g. jogging) is active. While the job runs, the page navigation is locked like during
+  any mission (the motion_server's mission shows in `active_nodes`).
+- **CANCEL**: cancel the running job, the robot stops and holds, the mission ends.
+- **Teach current pose**: save the current pose as joint goal or as Cartesian goal (tcp pose from
+  TF, current joints as IK seed); names of SRDF states are refused.
+
+The page needs the motion_server (`launch_robot.py`, `execution_gate:=true`) and a loaded
+`joint_trajectory_controller` on the RT PC; otherwise it shows why it is disabled. In the main
+window only four lines were added (import, page, nav button, update call).
 
 ## motion command line
 

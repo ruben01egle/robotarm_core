@@ -579,8 +579,8 @@ Reference implementations: `kdl_kinematics_plugin` (moveit_kinematics) and pick_
    apply instructions in [`doc/firmware_joint_trajectory_controller.md`](doc/firmware_joint_trajectory_controller.md)
    (base: firmware `705ac5d`, verified to apply cleanly). Apply it there, or open a pull request
    after getting collaborator access or forking the repository.
-3. **GUI**: goals, programs and the execution gate exist (`robotarm_motion`, `motion` command
-   line). A separate motion GUI on top of the `motion_server` action is planned.
+3. **GUI**: the operator GUI has a MOVEIT page (plan/execute goals and programs, teach) on top of
+   the `motion_server` (see `robotarm_motion` README, "GUI: MOVEIT page").
 4. **Remaining gap of the execution gate**: move_group can no longer execute, but a node that
    sends `FollowJointTrajectory` goals directly to the controller while the motion_server's mission
    keeps it active would still move the arm, and during a jog mission any node publishing to the
