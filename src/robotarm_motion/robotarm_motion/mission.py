@@ -74,7 +74,7 @@ class ControlCenterMission:
             self._mission_seen = True
         elif self._mission_seen:
             self.aborted = f'control_center switched to {msg.state}'
-            self.node.get_logger().error(f'{self.aborted}: cancelling the MoveIt goal')
+            self.node.get_logger().error(f'{self.aborted}: cancelling the running motion')
             self.moveit.cancel()
 
     def _wait_for_state(self, states, timeout):
@@ -131,7 +131,7 @@ class ControlCenterMission:
         if self.aborted is not None:
             raise MissionAborted(self.aborted)
 
-    def _check_after_failure(self, settle=1.0):
+    def check_after_failure(self, settle=1.0):
         """
         After a failed motion: wait for control_center's view, then raise MissionAborted if any.
 
@@ -151,7 +151,7 @@ class ControlCenterMission:
         self.check()
         result = self.moveit.run(request, plan_only)
         if result.error_code.val != MoveItErrorCodes.SUCCESS:
-            self._check_after_failure()
+            self.check_after_failure()
         self.check()
         return result
 
@@ -161,7 +161,7 @@ class ControlCenterMission:
         try:
             return self.moveit.execute(request)
         except MotionError:
-            self._check_after_failure()  # report the STOP rather than the execution error
+            self.check_after_failure()  # report the STOP rather than the execution error
             raise
 
     def __enter__(self):

@@ -1,3 +1,5 @@
+from glob import glob
+
 from setuptools import find_packages, setup
 
 package_name = 'robotarm_motion'
@@ -10,6 +12,8 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml', 'README.md']),
+        ('share/' + package_name + '/config', glob('config/*.yaml')),
+        ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -25,6 +29,8 @@ setup(
     entry_points={
         'console_scripts': [
             'demo_motions = robotarm_motion.demo_motions:main',
+            'motion = robotarm_motion.cli:main',
+            'motion_server = robotarm_motion.motion_server:main',
         ],
     },
 )

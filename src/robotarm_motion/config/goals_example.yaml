@@ -1,0 +1,32 @@
+# Example goals file of the robotarm (tool axis_triad), see robotarm_motion/README.md.
+# Copy it to your goals file with: ros2 run robotarm_motion motion init
+# home and ready are the named states of the SRDF and need not be listed here.
+
+goals:
+  # joint goals [deg], axis1..axis6: "ready" turned 40 deg to the left / right
+  left:  {joints_deg: [40, -74.48, 85.94, 0, 57.3, 0]}
+  right: {joints_deg: [-40, -74.48, 85.94, 0, 57.3, 0]}
+  # Cartesian goal: tcp pose in the base frame. The seed is the arm configuration the IK keeps
+  # (here: "ready" turned 30 deg); without it the IK may choose another configuration.
+  front_left:
+    xyz: [0.3818, 0.2418, 0.3558]
+    rpy_deg: [180, -21.25, 30]
+    seed_deg: [30, -74.48, 85.94, 0, 57.3, 0]
+
+programs:
+  # 5 cm square in the y-z plane at the tcp of "ready", corners rounded by 1 cm (Pilz sequence)
+  square:
+    - ready
+    - {goal: ready, motion: LIN, offset_xyz: [0, 0, 0.05], blend: 0.01}
+    - {goal: ready, motion: LIN, offset_xyz: [0, 0.05, 0.05], blend: 0.01}
+    - {goal: ready, motion: LIN, offset_xyz: [0, 0.05, 0], blend: 0.01}
+    - {goal: ready, motion: LIN}
+  # mixed: blended PTPs, a Cartesian goal, a straight retreat, an OMPL move (stops before and after)
+  tour:
+    - ready
+    - {goal: left, motion: PTP, blend: 0.05}
+    - {goal: front_left, motion: PTP}
+    - {goal: front_left, motion: LIN, offset_xyz: [0, 0, 0.05]}
+    - {goal: right, motion: OMPL}
+    - home
+    - ready

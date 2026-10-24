@@ -162,6 +162,23 @@ class MoveItClient:
     def _description_cb(self, msg):
         self._position_limits = parse_position_limits(msg.data)
 
+    @property
+    def position_limits(self):
+        """Joint position limits {joint: (lower, upper)} of /robot_description ({} before)."""
+        return self._position_limits
+
+    def _clamped(self, positions):
+        clamped, changes = clamp_to_limits(positions, self._position_limits)
+        if changes:
+            self.node.get_logger().info(
+                'start state clamped onto joint limits: ' +
+                ', '.join(f'{name} {delta:+.6f} rad' for name, delta in changes.items()))
+        return clamped, changes
+
+    def start_joints(self, timeout=5.0):
+        """Fresh current joint positions, clamped onto the joint limits (see clamp_to_limits)."""
+        return self._clamped(self.current_joints(timeout))[0]
+
     def _start_state(self):
         """
         Start state for a request without an explicit one.
@@ -175,22 +192,16 @@ class MoveItClient:
         current.is_diff = True
         if msg is None or not self._position_limits:
             return current
-        positions = dict(zip(msg.name, msg.position))
-        clamped, changes = clamp_to_limits(positions, self._position_limits)
-        if not changes:
-            return current
-        self.node.get_logger().info(
-            'start state clamped onto joint limits: ' +
-            ', '.join(f'{name} {delta:+.6f} rad' for name, delta in changes.items()))
-        return self.robot_state(clamped)
+        clamped, changes = self._clamped(dict(zip(msg.name, msg.position)))
+        return self.robot_state(clamped) if changes else current
 
-    def wait_for_servers(self, timeout=30.0):
-        """Wait until move_group offers /move_action and /compute_fk."""
+    def wait_for_servers(self, timeout=30.0, execute=True):
+        """Wait for move_group's /move_action, /compute_fk (and /execute_trajectory)."""
         if not self._move_client.wait_for_server(timeout_sec=timeout):
             raise MotionError('move_group action /move_action not available')
         if not self._fk_client.wait_for_service(timeout_sec=timeout):
             raise MotionError('service /compute_fk not available')
-        if not self._execute_client.wait_for_server(timeout_sec=timeout):
+        if execute and not self._execute_client.wait_for_server(timeout_sec=timeout):
             raise MotionError('move_group action /execute_trajectory not available')
 
     # ----- request building -------------------------------------------------------------------

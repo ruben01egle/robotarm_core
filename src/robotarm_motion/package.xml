@@ -18,6 +18,13 @@
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>shape_msgs</exec_depend>
   <exec_depend>robotarm_interface</exec_depend>
+  <exec_depend>robotarm_motion_msgs</exec_depend>
+  <exec_depend>action_msgs</exec_depend>
+  <exec_depend>control_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>trajectory_msgs</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
   <!-- named states (SRDF) and joint limits are read from the installed config package -->
   <exec_depend>robotarm_moveit_config</exec_depend>
 
