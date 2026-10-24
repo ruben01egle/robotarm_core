@@ -12,6 +12,10 @@ Arguments:
   tool:=<name>       tool on the flange, file in robotarm_description/urdf/tools/ without .xacro
                      (default: axis_triad, as on the RT PC; "none" = tcp on the flange)
   use_sim_time:=true|false   use the /clock of a simulation (MuJoCo sim: true; default: false)
+  allow_trajectory_execution:=true|false
+                     false: move_group only plans (RViz Execute and MoveGroup plan+execute fail);
+                     the robotarm_motion motion_server executes instead (execution gate).
+                     robot_bringup launch_robot.py sets false (default here: true)
 """
 
 from launch import LaunchDescription
@@ -71,7 +75,8 @@ def launch_setup(context):
             {
                 # publish the SRDF on /robot_description_semantic for other tools
                 'publish_robot_description_semantic': True,
-                'allow_trajectory_execution': True,
+                'allow_trajectory_execution':
+                    LaunchConfiguration('allow_trajectory_execution').perform(context) == 'true',
                 # do not copy velocities/efforts from /joint_states into the planning scene
                 'monitor_dynamics': False,
             },
@@ -111,5 +116,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'use_sim_time', default_value='false',
             description='true: use the /clock of a simulation (MuJoCo sim)'),
+        DeclareLaunchArgument(
+            'allow_trajectory_execution', default_value='true',
+            description='false: plan only, execution through the motion_server'),
         OpaqueFunction(function=launch_setup),
     ])

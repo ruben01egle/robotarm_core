@@ -14,6 +14,7 @@
   <exec_depend>gui</exec_depend>
   <exec_depend>robotarm_description</exec_depend>
   <exec_depend>robotarm_moveit_config</exec_depend>
+  <exec_depend>robotarm_motion</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
