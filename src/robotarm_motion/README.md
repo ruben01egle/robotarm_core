@@ -53,7 +53,8 @@ flowchart LR
 ## Quickstart
 
 With the full system running (RT side + `ros2 launch robot_bringup launch_robot.py`, see the
-robotarm_moveit_config README, section 4) and the robot armed:
+robotarm_moveit_config README, section 4, "Full system: start everything": mock, MuJoCo
+sim and real robot) and the robot armed:
 
 ```bash
 source install/setup.bash

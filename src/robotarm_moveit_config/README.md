@@ -355,69 +355,172 @@ Try other planners in the **Context** tab (top part of the panel):
   centimetres from the current TCP pose. With `LIN` the TCP then moves on a straight line.
   (`CIRC` needs an extra path constraint, which cannot be set in the panel.)
 
-### Full system: firmware mock, MuJoCo sim (or the real robot)
+### Full system: start everything (mock, MuJoCo sim or real robot)
 
-This is the setup used on the real robot: RT side from `robotarm_firmware_lnx`, control_center and
-MoveIt from this repository. With the firmware mock or the MuJoCo sim, everything runs on one
-machine. **Do not start `demo.launch.py` at the same time.**
+This is the setup used on the real robot: RT side from `robotarm_firmware_lnx`, control_center,
+MoveIt, motion_server, GUI and RViz from this repository. With the firmware mock or the MuJoCo sim
+everything runs on one machine. **Never start two RT sides at the same time** (mock, sim, real
+robot or `demo.launch.py`): each one provides `/controller_manager` and `/joint_states`.
 
-The firmware needs the `joint_trajectory_controller` patch ([`doc/`](doc/firmware_joint_trajectory_controller.md),
-section 7). Terminal 1, RT side, one of:
+#### 0. Once: prepare both workspaces
+
+The firmware needs the `joint_trajectory_controller` (section 7). Until it is merged upstream, use
+the branch `feature/joint-trajectory-controller` (fork `saw2812/robotarm_firmware_lnx`, or apply
+the patch in [`doc/`](doc/firmware_joint_trajectory_controller.md)):
+
+```bash
+# RT side (container or RT PC)
+cd <robotarm_firmware_lnx>
+git remote add fork https://github.com/saw2812/robotarm_firmware_lnx.git   # once
+git fetch fork
+git checkout -b feature/joint-trajectory-controller fork/feature/joint-trajectory-controller
+git -c url."https://github.com/".insteadOf="git@github.com:" submodule update --init
+source /opt/ros/jazzy/setup.bash
+rosdep install --from-paths src --ignore-src -y -r
+colcon build
+
+# high-level side (this repository)
+cd /robotarm_core
+source /opt/ros/jazzy/setup.bash
+rosdep install --from-paths src --ignore-src -y -r
+colcon build
+source install/setup.bash
+ros2 run robotarm_motion motion init     # goals file ~/.ros/robotarm_motion/goals.yaml from the example
+```
+
+After a `git pull` in either repository: `colcon build` again.
+
+#### 1. Start the RT side (terminal 1), one of
 
 ```bash
 cd <robotarm_firmware_lnx> && source install/setup.bash
-ros2 launch robotarm_bringup robotarm_mock.launch.py     # mock joints, follow every command exactly
-ros2 launch robotarm_mujoco sim.launch.py tool:=axis_triad   # physics sim with viewer window
-ros2 launch robotarm_bringup robotarm_hardware.launch.py # real robot
+ros2 launch robotarm_bringup robotarm_mock.launch.py tool:=axis_triad   # A: mock joints
+ros2 launch robotarm_mujoco sim.launch.py tool:=axis_triad              # B: MuJoCo physics sim (viewer window)
+ros2 launch robotarm_bringup robotarm_hardware.launch.py tool:=none     # C: real robot (RT PC)
 ```
 
-The tool must be the same on both sides. Mock and hardware launch files default to `axis_triad`,
-like MoveIt; the MuJoCo sim defaults to `none`, hence `tool:=axis_triad` above (or start MoveIt with
-`tool:=none`). In the sim the arm falls limp onto its joint limits until a controller holds it;
-the trajectory controller holds the current pose as soon as the mission activates it. Position and
+Wait until the controllers are loaded (`ros2 control list_controllers` in another terminal shows
+`joint_trajectory_controller ... inactive`).
+
+#### 2. Start the high-level side (terminal 2)
+
+```bash
+cd /robotarm_core && source install/setup.bash
+ros2 launch robot_bringup launch_robot.py tool:=axis_triad                    # A: mock
+ros2 launch robot_bringup launch_robot.py tool:=axis_triad use_sim_time:=true # B: MuJoCo sim
+ros2 launch robot_bringup launch_robot.py tool:=none                          # C: real robot
+#   further options: moveit:=false  rviz:=false  gui:=false  execution_gate:=false
+```
+
+This starts control_center, move_group (plans only), the motion_server (executes), the GUI and
+RViz. If the windows do not appear ("Authorization required"), run `xhost +local:` on the host
+(not in the container) and start again.
+
+**The tool must be the same on both sides** (the `tool` of the URDF defines where the tcp is):
+
+| Launch file | Default `tool` |
+|---|---|
+| firmware `robotarm_mock.launch.py` | `axis_triad` |
+| firmware `robotarm_hardware.launch.py` | `none` (no tool mounted on the real arm) |
+| firmware `robotarm_mujoco` `sim.launch.py` | `none` |
+| this repository: `launch_robot.py`, `move_group.launch.py`, `demo.launch.py` | `axis_triad` |
+
+Pass it explicitly on both sides, as above, with the tool that is actually mounted. A mismatch puts
+MoveIt's tcp 0.118 m away from the real one and gives it a wrong collision model.
+
+In the MuJoCo sim the arm falls limp onto its joint limits until a controller holds it; the
+trajectory controller holds the current pose as soon as a job's mission activates it. Position and
 velocity are followed by a generic sim PID there, not by a model of the moteus position loop.
 
-Terminal 2, high-level side (this workspace):
+#### 3. Real robot only: before the first motion
+
+- **Network**: RT PC and high-level PC in the same network, same `ROS_DOMAIN_ID` (default 0) and
+  `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` on both (the Dockerfiles set it), containers with
+  `--network=host`. On the high-level PC `ros2 node list` must show `/controller_manager`.
+- **Clocks**: synchronize both PCs (NTP/chrony). MoveIt compares the `/joint_states` stamps of the
+  RT PC with its own clock; more than about a second apart and it treats the robot state as
+  outdated ("Failed to fetch current robot state"), execution fails. Quick check: run
+  `date +%s.%N` on both at the same time.
+- **RT PC**: real-time setup and `/dev/fdcanusb` access as in the firmware's
+  `docs/REALTIME_SETUP.md`.
+- **Safety**: e-stop in reach, nobody in the working area, arm in a safe pose. Every job switches
+  controllers on the RT PC (the trajectory controller is activated at the start and deactivated at
+  the end); check with the firmware owner that these transitions are tested on the hardware.
+  First motions small and slow (below), then raise speed and `joint_limits.yaml` step by step.
+
+#### 4. Operate
+
+Arm the robot: **ARM ROBOT** in the GUI header, or
 
 ```bash
-source install/setup.bash
-ros2 launch robot_bringup launch_robot.py   # control_center + move_group + motion_server + RViz + GUI
-#   options: moveit:=false  rviz:=false  gui:=false  tool:=<name>  execution_gate:=false
-#   with the MuJoCo sim: use_sim_time:=true (the sim stamps /joint_states with sim time)
-```
-
-By default (`execution_gate:=true`) move_group only **plans**: RViz *Execute* and MoveGroup
-plan + execute do not move the robot. Motions are executed by the `motion_server` of
-[`robotarm_motion`](../robotarm_motion/README.md), the execution gate, which runs each job in its
-own control_center mission:
-
-```bash
-ros2 run robotarm_motion motion init && ros2 run robotarm_motion motion run square
-```
-
-control_center reaches `CONNECTED` when it sees the controller_manager. Then:
-
-```bash
-# arm (the GUI does this with its ARM button)
 ros2 service call /request_action robotarm_interface/srv/RequestAction \
   "{node_name: operator, action_id: 1, request_type: 254}"
-# run MoveIt motions through the gate (the motion_server starts and stops its own mission)
-ros2 run robotarm_motion motion move ready --scaling 0.1
-# STOP (e.g. during a motion), and leave STOP again
+```
+
+**GUI**: page **MOVEIT** → choose a program (▶) or goal (●), for a goal the motion (PTP/LIN/OMPL),
+the speed → **PLAN** (shown in RViz, nothing moves) → **EXECUTE**; **CANCEL** stops the job. Teach the
+current pose under "Teach current pose".
+
+**Command line** (terminal 3, `cd /robotarm_core && source install/setup.bash`):
+
+```bash
+ros2 run robotarm_motion motion list                          # goals (incl. home, ready) and programs
+ros2 run robotarm_motion motion move ready --plan-only        # PTP (default) plan only, shown in RViz
+ros2 run robotarm_motion motion move ready --scaling 0.1      # PTP to ready at 10 %
+ros2 run robotarm_motion motion move left --motion LIN        # other motion types: LIN, OMPL
+ros2 run robotarm_motion motion teach pose_a                  # current pose as joint goal
+ros2 run robotarm_motion motion teach frame_a --cartesian     # current tcp pose (+ joints as seed)
+ros2 run robotarm_motion motion run square --plan-only        # program: plan only
+ros2 run robotarm_motion motion run square                    # program: plan everything, then execute
+```
+
+Own PTP goals and programs go into `~/.ros/robotarm_motion/goals.yaml` (read fresh for every job;
+in the GUI ⟳ reloads it), e.g.
+
+```yaml
+goals:
+  pose_a: {joints_deg: [30, -60, 80, 0, 45, 0]}   # axis1..axis6 [deg]
+programs:
+  my_ptp:
+    - ready                                     # steps without "motion" are PTP
+    - {goal: pose_a, blend: 0.05}               # passes pose_a within 5 cm without stopping
+    - home
+```
+
+then `ros2 run robotarm_motion motion run my_ptp`. Format and options: `robotarm_motion` README.
+
+**First motions on the real robot**: jog the arm (GUI page JOINT) to a free pose, `motion teach start`,
+jog a few degrees away, `motion move start --plan-only`, check the path in RViz, then
+`motion move start --scaling 0.1`.
+
+**Stop**: **STOP** in the GUI header (the running job is aborted, the arm holds), **RESUME** to
+continue; or
+
+```bash
 ros2 service call /request_action robotarm_interface/srv/RequestAction \
-  "{node_name: operator, action_id: 11, request_type: 254}"
+  "{node_name: operator, action_id: 11, request_type: 254}"   # STOP
 ros2 service call /request_action robotarm_interface/srv/RequestAction \
-  "{node_name: operator, action_id: 11, request_type: 255}"
+  "{node_name: operator, action_id: 11, request_type: 255}"   # leave STOP
 ```
 
 (`action_id`: 1 = ARM, 2 = MISSION, 11 = STOP, 12 = EMERGENCY; `request_type`: 254 = start,
 255 = stop, see `robotarm_interface/srv/RequestAction.srv`.)
 
-Planning in RViz always works. **Execute** in RViz needs `execution_gate:=false` (move_group may
-execute again; then the gate is off, see `robotarm_motion` README) and a mission started by hand,
-otherwise it fails (`CONTROL_FAILED`, nothing moves). With the gate on, move_group only logs
-"not allowed to execute trajectories ... Only a motion plan will be computed" and reports
-SUCCESS for the plan; nothing moves either way:
+#### 5. Shut down
+
+Close the GUI window, then Ctrl-C in terminal 2 (high-level side), then in terminal 1 (RT side).
+move_group prints a segmentation fault on shutdown; that is known and harmless (section 8).
+
+#### RViz Execute and missions by hand
+
+Planning in RViz always works. By default (`execution_gate:=true`) move_group only **plans**:
+RViz *Execute* and MoveGroup plan + execute do not move the robot (move_group logs "not allowed to
+execute trajectories ... Only a motion plan will be computed" and reports SUCCESS for the plan).
+Motions are executed by the `motion_server` of [`robotarm_motion`](../robotarm_motion/README.md),
+the execution gate, which runs each job in its own control_center mission.
+
+To execute from RViz anyway, start with `execution_gate:=false` (the gate is then off) and start a
+mission by hand:
 
 ```bash
 ros2 service call /request_action robotarm_interface/srv/RequestAction \
@@ -588,8 +691,9 @@ Reference implementations: `kdl_kinematics_plugin` (moveit_kinematics) and pick_
 5. **control_center is not enforced**: `ros2 control switch_controllers` bypasses it. The
    controller manager still prevents two controllers on the same interfaces, but control_center
    only notices a lost controller during a mission, not one activated while ARMED.
-6. **Tool selection**: both sides default to `axis_triad` (MuJoCo sim: `none`, pass `tool:=`). With
-   another tool, set the same `tool` on the RT PC and in MoveIt, and regenerate the collision matrix.
+6. **Tool selection**: the defaults differ (firmware hardware and sim: `none`, firmware mock and this
+   repository: `axis_triad`, see section 4 "Full system"). Always pass the mounted `tool` on both
+   sides. With another tool, regenerate the collision matrix.
 7. **`/joint_states` rate on the RT PC is 50 Hz** (`joint_state_broadcaster.publish_rate`), the demo
    uses 500 Hz. Fine for MoveIt; control_center's watchdog triggers after 0.5 s without a message.
 
@@ -650,8 +754,8 @@ Reference implementations: `kdl_kinematics_plugin` (moveit_kinematics) and pick_
 - **`use_hardware` in `move_group.launch.py`**: the URDF is loaded with `use_hardware:=false`. This
   only changes the ros2_control plugin tag, which move_group ignores, so it is correct for the
   real robot too. `tool` is different: it moves the `tcp` (and adds the tool to the collision
-  model), so it must match the tool on the RT PC. Default on both sides: `axis_triad`; the MuJoCo
-  sim defaults to `none`, so start it with `tool:=axis_triad`.
+  model), so it must match the tool on the RT PC. The defaults differ between the launch files
+  (table in section 4, "Full system"); pass `tool:=` explicitly on both sides.
 - **A joint resting on its limit blocks planning**: MoveIt refuses a start state outside the
   joint limits (`START_STATE_INVALID`, "outside bounds"), even by 0.0005 rad. In the MuJoCo sim the
   limp arm rests on axis2's upper limit; the real arm can rest on a mechanical stop after power-up.
