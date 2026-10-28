@@ -225,8 +225,7 @@ Standalone demo: `robot_state_publisher`, `ros2_control_node` with **mock hardwa
 
 Only `move_group` (+ RViz, `rviz:=true|false`, default `true`; `tool:=<name>`, default
 `axis_triad`, must match the tool on the RT PC; `use_sim_time:=true` with the MuJoCo sim;
-`allow_trajectory_execution:=false` makes move_group plan only, as `launch_robot.py` does for the
-execution gate). Starts **no** controller_manager and
+`allow_trajectory_execution:=false` makes move_group plan only). Starts **no** controller_manager and
 **no** robot_state_publisher; use it against the real ros2_control stack. `robot_bringup`'s
 `launch_robot.py` includes it (argument `moveit:=true`, the default). Here all MoveIt
 parameters are assembled with `MoveItConfigsBuilder`, including `moveit_manage_controllers=False`
@@ -302,15 +301,13 @@ meant for trying out MoveIt itself (planners, limits, RViz).
 ### Install dependencies (once per container)
 
 ```bash
-sudo apt update
-sudo apt install ros-jazzy-moveit ros-jazzy-pick-ik ros-jazzy-ros2-controllers
-# or, equivalently, from package.xml:
 rosdep update
-rosdep install --from-paths src/robotarm_moveit_config --ignore-src -y
+rosdep install --from-paths src --ignore-src -y
 ```
 
-(The devcontainer Dockerfile already installs these packages; the commands are only needed in an
-older container or outside the devcontainer. In the devcontainer you are root, so `sudo` is not needed.)
+(The devcontainer image already runs `rosdep` over the `package.xml` files under `src/`, see
+`.devcontainer/README.md`; the commands are only needed in an older container, after adding a
+dependency, or outside the devcontainer.)
 
 ### Build
 
@@ -385,7 +382,8 @@ source /opt/ros/jazzy/setup.bash
 rosdep install --from-paths src --ignore-src -y -r
 colcon build
 source install/setup.bash
-ros2 run robotarm_motion motion init     # goals file ~/.ros/robotarm_motion/goals.yaml from the example
+mkdir -p ~/.ros/robotarm_motion && cp install/robotarm_motion/share/robotarm_motion/config/goals_example.yaml \
+  ~/.ros/robotarm_motion/goals.yaml   # goals file of the motion_server from the example
 ```
 
 After a `git pull` in either repository: `colcon build` again.
@@ -409,7 +407,7 @@ cd /robotarm_core && source install/setup.bash
 ros2 launch robot_bringup launch_robot.py tool:=axis_triad                    # A: mock
 ros2 launch robot_bringup launch_robot.py tool:=axis_triad use_sim_time:=true # B: MuJoCo sim
 ros2 launch robot_bringup launch_robot.py tool:=none                          # C: real robot
-#   further options: moveit:=false  rviz:=false  gui:=false  execution_gate:=false
+#   further options: moveit:=false  rviz:=false  gui:=false
 ```
 
 This starts control_center, move_group (plans only), the motion_server (executes), the GUI and
@@ -513,14 +511,14 @@ move_group prints a segmentation fault on shutdown; that is known and harmless (
 
 #### RViz Execute and missions by hand
 
-Planning in RViz always works. By default (`execution_gate:=true`) move_group only **plans**:
-RViz *Execute* and MoveGroup plan + execute do not move the robot (move_group logs "not allowed to
-execute trajectories ... Only a motion plan will be computed" and reports SUCCESS for the plan).
-Motions are executed by the `motion_server` of [`robotarm_motion`](../robotarm_motion/README.md),
-the execution gate, which runs each job in its own control_center mission.
+Planning in RViz always works. Jobs of the `motion_server` of
+[`robotarm_motion`](../robotarm_motion/README.md) (GUI page MOVEIT, `motion` command line) run in
+their own control_center mission. RViz *Execute* only moves the robot while
+`joint_trajectory_controller` is active, i.e. during a mission; outside one the controller rejects
+the trajectory and nothing moves. Do not press *Execute* while a motion_server job runs: it would
+replace the running segment.
 
-To execute from RViz anyway, start with `execution_gate:=false` (the gate is then off) and start a
-mission by hand:
+To execute from RViz, start a mission by hand:
 
 ```bash
 ros2 service call /request_action robotarm_interface/srv/RequestAction \
@@ -657,17 +655,19 @@ Reference implementations: `kdl_kinematics_plugin` (moveit_kinematics) and pick_
    `axis_triad`. SRDF, RViz config, collision matrix and `robotarm_motion` use the new names; MoveIt
    uses the same default tool as the RT PC (`tool:=` launch argument). Acceleration limits exist
    only in `joint_limits.yaml`.
-5. **Dockerfile** installs `moveit`, `pick-ik`, `ros2-controllers`, `pinocchio` (robotarm_rbd
-   tests) and `joint-state-publisher-gui`.
+5. **Dependencies**: all declared in the `package.xml` files; the devcontainer image installs them
+   with `rosdep` (MoveIt, pick_ik, ros2_controllers, pinocchio, joint_state_publisher_gui).
 6. **Workspace build**: a plain `colcon build` of the whole workspace succeeds.
 7. **`robot_bringup/launch/launch_robot.py`** starts `move_group.launch.py` (`moveit:=true`, default),
    with `rviz:=`, `gui:=` and `tool:=` arguments.
 8. **Controller sets**: `RequestAction.controller_names` is a list since `robotarm_interface`
    `4aea864`; `ControlCenterMission` sends a list (`controllers=[...]`).
-9. **Goals, programs and the execution gate** (`robotarm_motion`): goals file with joint and
-   Cartesian goals (IK seed), programs (PTP/LIN/OMPL steps, blending, offsets, planned completely
-   before anything moves), `motion` command line, and the `motion_server` as the only executor of
-   MoveIt trajectories in `launch_robot.py` (`execution_gate:=true`).
+9. **Goals and programs** (`robotarm_motion`): goals file with joint and Cartesian goals (IK seed),
+   programs (PTP/LIN/OMPL steps, blending, offsets, planned completely before anything moves), the
+   `motion_server` that owns the goals file (services `get_goals`, `teach_goal`, `remove_goal`) and
+   executes jobs through move_group in its own mission, and the `motion` command line. (Until
+   2026-10-28 an "execution gate" with its own trajectory executor; replaced by execution through
+   move_group, see the verification log for the earlier tests.)
 
 ### Still open
 
@@ -684,10 +684,10 @@ Reference implementations: `kdl_kinematics_plugin` (moveit_kinematics) and pick_
    after getting collaborator access or forking the repository.
 3. **GUI**: the operator GUI has a MOVEIT page (plan/execute goals and programs, teach) on top of
    the `motion_server` (see `robotarm_motion` README, "GUI: MOVEIT page").
-4. **Remaining gap of the execution gate**: move_group can no longer execute, but a node that
-   sends `FollowJointTrajectory` goals directly to the controller while the motion_server's mission
-   keeps it active would still move the arm, and during a jog mission any node publishing to the
-   jog topics moves it. Closing that needs access control on the ROS network (SROS2).
+4. **No access control during a mission**: while the motion_server's mission keeps
+   `joint_trajectory_controller` active, RViz *Execute* or any node sending trajectories would
+   replace the running segment, and during a jog mission any node publishing to the jog topics
+   moves the arm. Closing that needs access control on the ROS network (SROS2).
 5. **control_center is not enforced**: `ros2 control switch_controllers` bypasses it. The
    controller manager still prevents two controllers on the same interfaces, but control_center
    only notices a lost controller during a mission, not one activated while ARMED.
@@ -1007,6 +1007,24 @@ file from `config/goals_example.yaml`, `ROS_DOMAIN_ID=42`.
 Found on the way: MoveIt 2.12.4's service `/plan_sequence_path` fails every blended Pilz sequence
 ("Blending failed"); the action `/sequence_move_group` with `plan_only` plans the same request.
 `robotarm_motion` uses the action. Unit tests: 18 (`test/test_goals.py`) + flake8 + pep257.
+
+### Execution through move_group, goal services, typed SystemStatus (2026-10-28)
+
+`demo.launch.py` (mock hardware) with `control_center` (`hardware_component_name:=moteus_hardware_system`)
+and the `motion_server` started by hand, `joint_trajectory_controller` set inactive first so every
+job needs a real mission. Not repeated on the firmware mock or the MuJoCo sim (not available here).
+
+| # | Test | Result |
+|---|---|---|
+| E1 | `motion list`, `teach` (joint, `--cartesian`), `teach` of an existing / SRDF name, bad name, `remove` | all through the services; existing names refused without `--force`, YAML updated |
+| E2 | `/system_status` | `state` as number (1 = CONNECTED, 2 = ARMED, 5 = STOP), `active_controllers` as list, `active_node` |
+| E3 | `motion run tour` (default scaling) | done, 3 segments through `/execute_trajectory`; mission owner `motion_server`, controller inactive again afterwards |
+| E4 | STOP during a job | `aborted, control_center switched to STOP`, controller inactive, resume to ARMED works |
+| E5 | cancel of a running job | CANCELED after 1.1 s through `/trajectory_execution_event` (without it the job ran to the end: move_group handles the cancel request only after the execution) |
+| E6 | GUI MOVEIT page (offscreen) | goals and programs from `get_goals`, teach through the server, SRDF names refused, state shown as ARMED |
+
+`motion run tour --scaling 0.5` fails in planning (Pilz blending exceeds the deceleration limit of
+axis1); unrelated to these changes.
 
 ### Not verified here
 
