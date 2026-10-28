@@ -22,6 +22,7 @@ from moveit_msgs.msg import (
     PlanningOptions,
     PositionConstraint,
     RobotState,
+    RobotTrajectory,
 )
 from moveit_msgs.srv import GetPositionFK
 from rclpy.action import ActionClient
@@ -327,6 +328,19 @@ class MoveItClient:
         if code != MoveItErrorCodes.SUCCESS:
             raise MotionError(f'motion failed: {ERROR_NAMES.get(code, code)}', code)
         return result
+
+    def execute_trajectory(self, trajectory):
+        """
+        Execute a planned JointTrajectory through move_group; MotionError unless it succeeded.
+
+        move_group checks the start against the current state (allowed_start_tolerance) and
+        monitors the duration (moveit_controllers.yaml, trajectory_execution).
+        """
+        goal = ExecuteTrajectory.Goal()
+        goal.trajectory = RobotTrajectory(joint_trajectory=trajectory)
+        code = self._send(self._execute_client, goal).error_code.val
+        if code != MoveItErrorCodes.SUCCESS:
+            raise MotionError(f'execution failed: {ERROR_NAMES.get(code, code)}', code)
 
     def move_to_named(self, name, pipeline=PILZ, planner='PTP'):
         """Move to a named state of the SRDF (default: Pilz PTP)."""

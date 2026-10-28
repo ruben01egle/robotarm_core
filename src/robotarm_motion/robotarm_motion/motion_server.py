@@ -1,26 +1,23 @@
 """
-motion_server: the execution gate for MoveIt motions.
+motion_server: runs MoveIt motions inside a control_center mission.
 
 Jobs (a program or a single goal from the goals file) arrive on the action ~/run
-(robotarm_motion_msgs/action/RunMotion). For each job the server
+(robotarm_interface/action/RunMotion). For each job the server
 
 1. loads the goals file, splits the program into segments and plans ALL of them (plan only) from
    the current state; if one step cannot be planned, nothing moves,
 2. shows the plan in RViz (display_planned_path),
 3. unless plan_only: starts a control_center mission for the joint_trajectory_controller, executes
-   the segments one by one directly on the controller (TrajectoryExecutor), stops the mission.
+   the planned segments one by one through move_group (/execute_trajectory), stops the mission.
 
 Only one job runs at a time; further goals are rejected. A STOP, ERROR, EMERGENCY or lost
 controller during the job aborts it (control_center deactivates the controller, the server cancels
-its trajectory). In the real-robot launch (robot_bringup launch_robot.py, execution_gate:=true)
-move_group has trajectory execution switched off, so this server is the only way MoveIt
-trajectories reach the robot; RViz can still plan.
+the running execution).
 
 ROS parameters:
   goals_file        goals file (default $ROS_HOME/robotarm_motion/goals.yaml)
   default_scaling   velocity/acceleration scaling when a job does not set one (default 0.2)
   controller        trajectory controller (default joint_trajectory_controller)
-  start_tolerance   [rad] allowed difference between trajectory start and robot (default 0.01)
   arm               true: arm the hardware if control_center is only CONNECTED (default false)
 """
 
@@ -33,7 +30,6 @@ from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 
 from robotarm_interface.action import RunMotion
-from robotarm_motion.executor import TrajectoryExecutor
 from robotarm_motion.goals import (
     default_goals_file, GoalFile, GoalFileError, MOTIONS, segments, Step)
 from robotarm_motion.mission import ControlCenterMission, MissionAborted, MissionError
@@ -54,16 +50,14 @@ class MotionServer(Node):
         self.declare_parameter('goals_file', default_goals_file())
         self.declare_parameter('default_scaling', 0.2)
         self.declare_parameter('controller', 'joint_trajectory_controller')
-        self.declare_parameter('start_tolerance', 0.01)
         self.declare_parameter('arm', False)
         param = self.get_parameter
         self.controller = param('controller').value
 
         self.moveit = MoveItClient(self)
         self.planner = Planner(self, self.moveit)
-        self.executor_ = TrajectoryExecutor(self, self.controller, param('start_tolerance').value)
-        # STOP etc. cancel the running trajectory through the executor
-        self.mission = ControlCenterMission(self, self.executor_, controllers=[self.controller],
+        # STOP etc. cancel the running MoveIt goal
+        self.mission = ControlCenterMission(self, self.moveit, controllers=[self.controller],
                                             arm=param('arm').value)
         self._busy = threading.Lock()
         self._action = ActionServer(
@@ -86,7 +80,7 @@ class MotionServer(Node):
         return GoalResponse.ACCEPT
 
     def _on_cancel(self, _goal_handle):
-        self.executor_.cancel()
+        self.moveit.cancel()
         return CancelResponse.ACCEPT
 
     def _execute(self, goal_handle):
@@ -158,8 +152,7 @@ class MotionServer(Node):
                 self._feedback(goal_handle, 'EXECUTING', i, len(planned))
                 self.mission.check()
                 try:
-                    self.executor_.execute(seg.trajectory, self.moveit.current_joints(),
-                                           self.moveit.position_limits)
+                    self.moveit.execute_trajectory(seg.trajectory)
                 except MotionError:
                     self.mission.check_after_failure()   # report a STOP rather than the error
                     raise
@@ -179,13 +172,12 @@ def main(args=None):
     executor = MultiThreadedExecutor()
     executor.add_node(node)
 
-    # wait for move_group and the controller action in the background, the node spins meanwhile
+    # wait for move_group in the background, the node spins meanwhile
     def wait():
         try:
-            node.moveit.wait_for_servers(timeout=60.0, execute=False)
+            node.moveit.wait_for_servers(timeout=60.0)
             node.planner.wait_for_services(timeout=60.0)
-            node.executor_.wait_for_server(timeout=60.0)
-            node.get_logger().info('move_group and the trajectory controller found')
+            node.get_logger().info('move_group found')
         except MotionError as e:
             node.get_logger().error(f'{e}; jobs will fail until it is available')
     threading.Thread(target=wait, daemon=True).start()

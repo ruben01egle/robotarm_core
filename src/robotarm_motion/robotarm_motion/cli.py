@@ -9,7 +9,7 @@ Command line for goals, programs and motions: ros2 run robotarm_motion motion <c
   remove NAME                    delete goal NAME from the goals file
   run PROGRAM [--plan-only] [--scaling S]
   move GOAL [--motion PTP|LIN|OMPL] [--plan-only] [--scaling S]
-                                 plan (and execute) through the motion_server, the execution gate
+                                 plan (and execute) through the motion_server
 
 --goals FILE selects another goals file (for run/move also passed to the motion_server).
 """

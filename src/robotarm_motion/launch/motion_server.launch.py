@@ -1,5 +1,5 @@
 """
-Start the motion_server, the execution gate for MoveIt motions (see robotarm_motion README).
+Start the motion_server: goals, programs and MoveIt jobs inside a mission (robotarm_motion README).
 
 Launch arguments:
   goals_file:=<path>        goals file (default $ROS_HOME/robotarm_motion/goals.yaml)

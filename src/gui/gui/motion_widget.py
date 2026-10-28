@@ -1,5 +1,5 @@
 """
-MoveIt page: plan and execute goals and programs through the motion_server (execution gate).
+MoveIt page: plan and execute goals and programs through the motion_server.
 
 The page itself never activates a controller or sends a trajectory. It sends jobs to the
 motion_server (robotarm_motion, action /motion_server/run), which plans them with MoveIt, runs them
@@ -428,7 +428,7 @@ class MotionWidget(QWidget):
         self.available = server and controller
         if not server:
             self.unavailable_reason = ("motion_server not running "
-                                       "(robot_bringup launch_robot.py, execution_gate:=true)")
+                                       "(robot_bringup launch_robot.py, moveit:=true)")
         elif not controller:
             self.unavailable_reason = (f"{TRAJECTORY_CONTROLLER} not loaded on the RT PC "
                                        "(firmware patch, see robotarm_moveit_config doc/)")

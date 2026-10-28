@@ -13,9 +13,8 @@ Arguments:
                      (default: axis_triad, as on the RT PC; "none" = tcp on the flange)
   use_sim_time:=true|false   use the /clock of a simulation (MuJoCo sim: true; default: false)
   allow_trajectory_execution:=true|false
-                     false: move_group only plans (RViz Execute and MoveGroup plan+execute fail);
-                     the robotarm_motion motion_server executes instead (execution gate).
-                     robot_bringup launch_robot.py sets false (default here: true)
+                     false: move_group only plans (RViz Execute and MoveGroup plan+execute fail)
+                     (default: true)
 """
 
 from launch import LaunchDescription
