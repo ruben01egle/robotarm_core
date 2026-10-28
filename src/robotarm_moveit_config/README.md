@@ -64,7 +64,7 @@ control_center activates and deactivates `ff_controller` in the same request as 
 | `config/pilz_industrial_motion_planner_planning.yaml` | Pilz pipeline and sequence capability |
 | `config/moveit_controllers.yaml` | `moveit_simple_controller_manager` → `joint_trajectory_controller`, execution tolerances |
 | `config/ros2_controllers.yaml` | ros2_control for the demo only (the RT PC has its own) |
-| `config/moveit.rviz` | RViz: solid robot = actual state (`/tf`), see-through = planned motion; the panel's goal robot is off ("Query Goal State" to use it) |
+| `config/moveit.rviz` | RViz: solid robot = actual state (`/tf`), see-through = planned motion; the MotionPlanning panel and its goal robot are hidden (Panels menu → MotionPlanning, "Query Goal State") |
 | `launch/demo.launch.py` | standalone demo with mock hardware (`rviz:=`) |
 | `launch/move_group.launch.py` | move_group (+ RViz) against the real ros2_control stack (`rviz:=`, `tool:=`, `use_sim_time:=`, `allow_trajectory_execution:=`) |
 | `launch/setup_assistant.launch.py` | Setup Assistant on the *installed* copy |
@@ -118,8 +118,10 @@ ros2 launch robotarm_moveit_config demo.launch.py            # rviz:=false for h
 ros2 run robotarm_motion demo_motions                        # OMPL, Pilz PTP and LIN test motions
 ```
 
-Here `joint_trajectory_controller` is always active. In RViz: tab **Planning**, group `arm`; drag
-the marker at the TCP or pick a **Goal State**; set the scaling; **Plan**, then **Execute**. Pilz is
+Here `joint_trajectory_controller` is always active, so RViz's own planning works: open
+**Panels → MotionPlanning** and enable **Query Goal State** in the MotionPlanning display (both are
+hidden by default); tab **Planning**, group `arm`; drag the marker at the TCP or pick a **Goal
+State**; set the scaling; **Plan**, then **Execute**. Pilz is
 selected in the **Context** tab (`pilz_industrial_motion_planner`, `PTP` or `LIN`).
 
 ### Full system: mock, MuJoCo sim or real robot
