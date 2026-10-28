@@ -8,7 +8,7 @@ from .controller_modes import GC_CONTROLLER, IMPEDANCE_CONTROLLER, set_available
 HAND_GUIDING = "hand_guiding"
 COMPLIANT_HOLD = "compliant_hold"
 
-# (Titel, Beschreibung, Controller-Set)
+# (title, description, controller set)
 MODES = {
     HAND_GUIDING: ("Hand guiding",
                    "Arm floats, move it by hand, stays where it is left.",
@@ -28,7 +28,7 @@ class ComplianceWidget(QWidget):
 
         self.request_action_client = RequestActionClient(self.node)
 
-        # Interner Zustand: None, HAND_GUIDING oder COMPLIANT_HOLD
+        # Internal state: None, HAND_GUIDING or COMPLIANT_HOLD
         self.active_mode = None
         self.disengage_requested = False
         self.available = {mode: True for mode in MODES}
@@ -46,7 +46,7 @@ class ComplianceWidget(QWidget):
         header.setStyleSheet("font-size: 16px;")
         self.main_layout.addWidget(header)
 
-        # --- 2. MODI (je eine Karte mit eigenem Enable-Button) ---
+        # --- 2. MODES (one card each, with its own enable button) ---
         for mode, (title, description, _) in MODES.items():
             card = QFrame()
             card.setFrameShape(QFrame.Shape.StyledPanel)
@@ -73,7 +73,7 @@ class ComplianceWidget(QWidget):
             self.buttons[mode] = btn
             self.main_layout.addWidget(card)
 
-        # --- 3. WARNUNG BEI UNERWARTETEM ABSCHALTEN ---
+        # --- 3. WARNING ON UNEXPECTED DISENGAGE ---
         self.warning_label = QLabel("")
         self.warning_label.setWordWrap(True)
         self.warning_label.setStyleSheet("""
@@ -85,11 +85,11 @@ class ComplianceWidget(QWidget):
 
         self.main_layout.addStretch()
 
-        # Initialen Sperr-Zustand erzwingen
+        # Apply the initial lock state
         self.update_ui_lock_state()
 
     def on_mode_clicked(self, mode, is_checked):
-        """Wird aufgerufen, wenn der Benutzer manuell auf einen Enable-Button klickt."""
+        """Called when the user clicks an enable button."""
         btn = self.buttons[mode]
         btn.blockSignals(True)
         btn.setChecked(self.active_mode == mode)
@@ -102,7 +102,7 @@ class ComplianceWidget(QWidget):
             self.disengage_requested = True
 
         def cb(response):
-            # Abgelehnter Disengage -> späteres Abschalten wäre wieder "unerwartet"
+            # Disengage refused: a later disengage would count as "unexpected" again
             if not is_checked and not response.success:
                 self.disengage_requested = False
 
@@ -117,7 +117,7 @@ class ComplianceWidget(QWidget):
         for mode, btn in self.buttons.items():
             active = self.active_mode == mode
             btn.setChecked(active)
-            # Nur ein Modus gleichzeitig, nicht geladene Controller ausgrauen
+            # Only one mode at a time; grey out controllers that are not loaded
             btn.setEnabled(active or (self.active_mode is None and self.available[mode]))
             if active:
                 btn.setText("DISABLE")
@@ -148,7 +148,7 @@ class ComplianceWidget(QWidget):
         self.update_ui_lock_state()
 
     def update_widget(self):
-        """Wird zyklisch vom übergeordneten GUI-Timer aufgerufen (~30 Hz)."""
+        """Called periodically by the main GUI timer (~30 Hz)."""
         loaded = self.store.get_loaded_controllers()
         available = {mode: set_available(controllers, loaded) for mode, (_, _, controllers) in MODES.items()}
         if available != self.available:

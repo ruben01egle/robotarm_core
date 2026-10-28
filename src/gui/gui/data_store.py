@@ -8,13 +8,13 @@ class GuiDataStore:
         self._lock = threading.Lock()
         self._maxlen = maxlen
         
-        # 1. Hochfrequente Telemetrie-Daten (nur noch IST-Werte für Plots & Live-Abfragen)
-        # Jeder Frame enthält: 'time' und 'joint_state_act' (Liste aus {'p':..., 'v':..., 't':...})
+        # 1. High-rate telemetry (actual values only, for plots and live queries)
+        # Each frame holds 'time' and 'joint_state' (list of {'p':..., 'v':..., 't':...}, SI units)
         self.frames = deque(maxlen=maxlen)
-        # TCP-Pose aus TF (Root-Link der URDF -> tcp): 'time' und 'axes' (Liste aus {'p':..., 'v':...} für X, Y, Z, Rx, Ry, Rz)
+        # TCP pose from TF (URDF root link -> tcp): 'time' and 'axes' (list of {'p':..., 'v':...} for X, Y, Z, Rx, Ry, Rz)
         self.cart_frames = deque(maxlen=maxlen)
         
-        # 2. Aktuelle Status-Werte der ROS FSM
+        # 2. Current status of the control_center state machine
         self.connected = False
         self.armed = False
         self.state = "UNKNOWN"
@@ -23,22 +23,22 @@ class GuiDataStore:
         self.active_controllers = []
 
         self.joint_limits = list()
-        # Root-Link der URDF (Basis-Frame für die TCP-Pose), None bis die URDF gelesen wurde
+        # Root link of the URDF (base frame of the TCP pose), None until the URDF has been read
         self.base_frame = None
-        # Je Jog-Controller-Instanz: name -> (max_linear_velocity [m/s], max_angular_velocity [rad/s])
+        # Per jog controller instance: name -> (max_linear_velocity [m/s], max_angular_velocity [rad/s])
         self.cartesian_limits = {}
-        # Namen der im controller_manager geladenen Controller, None bis zur ersten Abfrage
+        # Names of the controllers loaded in the controller_manager, None until the first query
         self.loaded_controllers = None
 
-        # Steifigkeit des cartesian_impedance_controller, wie vom Controller verwendet ("committed").
-        # dict mit 'frame', 'linear', 'angular', 'max_linear', 'max_angular' oder None bis gelesen
+        # Stiffness of the cartesian_impedance_controller as used by the controller ("committed").
+        # dict with 'frame', 'linear', 'angular', 'max_linear', 'max_angular', or None until read
         self.stiffness = None
-        # Zähler, damit die GUI Änderungen (Lesen, /parameter_events, Apply) erkennt
+        # Counter, so the GUI notices changes (read, /parameter_events, apply)
         self.stiffness_version = 0
-        # Ergebnis des letzten Apply: (successful, reason) oder None, wird von der GUI abgeholt
+        # Result of the last apply: (successful, reason) or None, collected by the GUI
         self.stiffness_apply_result = None
 
-        # 3. Log-Nachrichten aus der ROS-Welt
+        # 3. Log messages from ROS
         self.log_queue = deque(maxlen=50)
 
     def clear_store(self):
@@ -62,8 +62,8 @@ class GuiDataStore:
 
     def push_telemetry_frame(self, time_s: float, actual_list: list):
         """
-        Wird von der ROS-Node aufgerufen.
-        actual_list ist eine Liste von Dicts für jede Achse:
+        Called by the ROS node.
+        actual_list is a list with one dict per axis:
         [{'p': pos, 'v': vel, 't': torq}, ...]
         """
         frame = {
@@ -75,9 +75,9 @@ class GuiDataStore:
 
     def push_cartesian_frame(self, time_s: float, pose: list):
         """
-        Wird von der ROS-Node aufgerufen.
-        pose = [x, y, z, rx, ry, rz] in m bzw. rad (RPY).
-        Winkel werden entfaltet (keine ±pi Sprünge im Plot), Geschwindigkeit per Differenzenquotient.
+        Called by the ROS node.
+        pose = [x, y, z, rx, ry, rz] in m and rad (RPY).
+        Angles are unwrapped (no ±pi jumps in the plot), velocity by finite differences.
         """
         with self._lock:
             prev = self.cart_frames[-1] if self.cart_frames else None
@@ -118,7 +118,7 @@ class GuiDataStore:
             self.cartesian_limits[controller] = (max_linear, max_angular)
 
     def get_cartesian_limits(self):
-        """dict: Controller-Name -> (max_linear, max_angular), nur bereits gelesene Instanzen."""
+        """dict: controller name -> (max_linear, max_angular), only instances read so far."""
         with self._lock:
             return dict(self.cartesian_limits)
 
@@ -127,15 +127,15 @@ class GuiDataStore:
             self.loaded_controllers = set(names)
 
     def get_loaded_controllers(self):
-        """Set der geladenen Controller oder None, solange der controller_manager nicht abgefragt wurde."""
+        """Set of loaded controllers, or None while the controller_manager has not been queried."""
         with self._lock:
             return None if self.loaded_controllers is None else set(self.loaded_controllers)
 
     def update_stiffness(self, values: dict):
-        """Übernimmt (Teil-)Werte der committed Steifigkeit, z.B. aus get_parameters oder /parameter_events."""
+        """Take over (partial) values of the committed stiffness, e.g. from get_parameters or /parameter_events."""
         with self._lock:
             if self.stiffness is None:
-                # Partielle Events vor dem ersten vollständigen Lesen ignorieren
+                # Ignore partial events before the first complete read
                 if not all(k in values for k in ('frame', 'linear', 'angular', 'max_linear', 'max_angular')):
                     return
                 self.stiffness = {}
@@ -143,7 +143,7 @@ class GuiDataStore:
             self.stiffness_version += 1
 
     def get_stiffness(self):
-        """(version, dict oder None)"""
+        """(version, dict or None)"""
         with self._lock:
             return self.stiffness_version, (dict(self.stiffness) if self.stiffness else None)
 
@@ -167,19 +167,19 @@ class GuiDataStore:
             self.active_controllers = list(active_controllers)
 
     def add_log(self, level, name, text):
-        """Wird von der ROS-Node aufgerufen, um Logs zu puffern."""
+        """Called by the ROS node to buffer log messages."""
         from datetime import datetime
         ts = datetime.now().strftime("%H:%M:%S")
         self.log_queue.append(f"[{ts}] {level} [{name}]: {text}")
 
     def get_new_logs(self):
-        """Wird von der GUI aufgerufen. Holt Logs ab und leert die Queue."""
+        """Called by the GUI: returns the buffered log messages and clears the queue."""
         with self._lock:
             logs = list(self.log_queue)
             self.log_queue.clear()
         return logs
 
-    # --- Getter für GUI (Plots) ---
+    # --- Getters for the GUI (plots) ---
     def _window(self, frames, seconds):
         if not frames:
             return []
@@ -198,7 +198,7 @@ class GuiDataStore:
             return self._window(self.cart_frames, seconds)
 
     def get_current_tcp_pose(self):
-        """Letzte TCP-Pose [x, y, z, rx, ry, rz] oder None, falls noch kein TF da ist."""
+        """Latest TCP pose [x, y, z, rx, ry, rz] in m and rad, or None while there is no TF yet."""
         with self._lock:
             if not self.cart_frames:
                 return None
@@ -220,22 +220,22 @@ class GuiDataStore:
             }
 
     def get_active_controller_list(self) -> list:
-        """Controller-Set der laufenden Mission des control_center."""
+        """Controller set of the control_center's running mission."""
         with self._lock:
             return list(self.active_controllers)
     
-    # --- Live-Getter für dein JointJogWidget ---
+    # --- Live getters (latest frame) ---
     def get_current_positions(self) -> list:
-        """Gibt die reinen aktuellen IST-Positionen aller Achsen in Grad zurück."""
+        """Current actual positions of all axes in rad."""
         with self._lock:
             if not self.frames:
-                return [0.0] * 6 # Fallback, falls noch keine ROS-Daten da sind
+                return [0.0] * 6  # fallback while there is no ROS data yet
             
             last_frame = self.frames[-1]
             return [joint['p'] for joint in last_frame['joint_state']]
 
     def get_current_velocities(self) -> list:
-        """Gibt die aktuellen IST-Geschwindigkeiten aller Achsen zurück."""
+        """Current actual velocities of all axes in rad/s."""
         with self._lock:
             if not self.frames:
                 return [0.0] * 6
@@ -244,7 +244,7 @@ class GuiDataStore:
             return [joint['v'] for joint in last_frame['joint_state']]
 
     def get_current_torques(self) -> list:
-        """Gibt die aktuellen IST-Drehmomente (Effort) aller Achsen in Nm zurück."""
+        """Current actual torques (effort) of all axes in Nm."""
         with self._lock:
             if not self.frames:
                 return [0.0] * 6

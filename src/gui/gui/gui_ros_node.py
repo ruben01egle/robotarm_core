@@ -21,16 +21,16 @@ from .controller_modes import CARTESIAN_JOG_CONTROLLERS, IMPEDANCE_CONTROLLER
 
 from robotarm_interface.msg import SystemStatus
 
-# SystemStatus.state -> Name für die Anzeige
+# SystemStatus.state -> name for the display
 STATE_NAMES = {
     getattr(SystemStatus, name): name
     for name in ('IDLE', 'CONNECTED', 'ARMED', 'MISSION', 'CONFIG', 'STOP', 'ERROR', 'EMERGENCY')
 }
 
-# Name des TCP-Links ist in der URDF fest vorgegeben
+# The name of the TCP link is fixed in the URDF
 TCP_FRAME = 'tcp'
 
-# Steifigkeits-Parameter des cartesian_impedance_controller -> Schlüssel im Data Store
+# Stiffness parameters of the cartesian_impedance_controller -> keys in the data store
 STIFFNESS_PARAMS = {
     'cartesian_stiffness_frame': 'frame',
     'cartesian_linear_stiffness': 'linear',
@@ -66,7 +66,7 @@ class GuiRosNode(Node):
 
         self.create_subscription(Log, '/rosout', self.log_cb, 10)
 
-        # TCP-Pose aus TF (robot_state_publisher auf dem Firmware-PC), gleiche Rate wie /joint_states
+        # TCP pose from TF (robot_state_publisher on the RT PC), same rate as /joint_states
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.last_tcp_stamp = None
@@ -74,19 +74,19 @@ class GuiRosNode(Node):
 
         self.urdf_timer = self.create_timer(1.0, self.fetch_urdf_limits_startup)
 
-        # Geschwindigkeitslimits beider Jog-Instanzen (direkt und *_impedance), in der Simulation fehlt die direkte
+        # Velocity limits of both jog instances (direct and *_impedance); the simulation has no direct one
         self.cartesian_param_clients = {
             name: self.create_client(GetParameters, f'/{name}/get_parameters')
             for name in CARTESIAN_JOG_CONTROLLERS.values()
         }
         self.cartesian_limits_timer = self.create_timer(1.0, self.fetch_cartesian_limits_startup)
 
-        # Geladene Controller (zum Ausgrauen nicht verfügbarer Modi), zyklisch für Neustarts des controller_managers
+        # Loaded controllers (to grey out unavailable modes), periodically for restarts of the controller_manager
         self.list_ctrl_client = self.create_client(ListControllers, '/controller_manager/list_controllers')
         self.list_ctrl_pending = False
         self.list_ctrl_timer = self.create_timer(5.0, self.fetch_loaded_controllers)
 
-        # Steifigkeit des cartesian_impedance_controller: lesen beim Start, bei jeder Aktivierung und auf Anfrage
+        # Stiffness of the cartesian_impedance_controller: read at start, on every activation and on request
         self.stiffness_get_client = self.create_client(
             GetParameters, f'/{IMPEDANCE_CONTROLLER}/get_parameters')
         self.stiffness_set_client = self.create_client(
@@ -120,7 +120,7 @@ class GuiRosNode(Node):
             self.get_logger().error(f"Error while parsing joint states: {e}", throttle_duration_sec=2.0)
 
     def tcp_pose_cb(self):
-        # Basis-Frame = Root-Link der URDF, erst nach dem Lesen der URDF bekannt
+        # Base frame = root link of the URDF, known only after the URDF has been read
         base_frame = self.store.get_base_frame()
         if base_frame is None:
             return
@@ -150,7 +150,7 @@ class GuiRosNode(Node):
         state = STATE_NAMES.get(msg.state, f"UNKNOWN ({msg.state})")
         self.store.set_status(state, msg.connected, msg.armed, msg.stopped, msg.active_node, msg.active_controllers)
 
-        # Bei jeder Aktivierung neu lesen, nach einem Reconfigure können sich die Limits geändert haben
+        # Read again on every activation, the limits may have changed after a reconfigure
         impedance_active = IMPEDANCE_CONTROLLER in msg.active_controllers
         if impedance_active and not self.impedance_was_active:
             self.request_stiffness_read()
@@ -165,7 +165,7 @@ class GuiRosNode(Node):
 
         self.urdf_timer.cancel()
 
-        # Parameter abfragen
+        # Query the parameter
         req = GetParameters.Request()
         req.names = ['robot_description']
         
@@ -179,10 +179,10 @@ class GuiRosNode(Node):
                 self.get_logger().error("URDF-Parameter 'robot_description' is empty!")
                 return
 
-            # Den XML-String aus dem ROS-Parameter extrahieren
+            # XML string of the ROS parameter
             urdf_string = response.values[0].string_value
             
-            # URDF parsen
+            # Parse the URDF
             base_frame = self.parse_urdf_root_link(urdf_string)
             if base_frame:
                 self.get_logger().info(f"URDF root link: '{base_frame}'")
@@ -256,7 +256,7 @@ class GuiRosNode(Node):
         finally:
             self.list_ctrl_pending = False
 
-    # --- Steifigkeit cartesian_impedance_controller ---
+    # --- Stiffness of the cartesian_impedance_controller ---
     def fetch_stiffness_startup(self):
         if not self.stiffness_get_client.service_is_ready():
             self.get_logger().info(f"Waiting for '/{IMPEDANCE_CONTROLLER}' to read stiffness...", throttle_duration_sec=10.0)
@@ -265,7 +265,7 @@ class GuiRosNode(Node):
         self.request_stiffness_read()
 
     def request_stiffness_read(self):
-        """Liest Frame, Werte und Limits (asynchron, Ergebnis landet im Data Store)."""
+        """Read frame, values and limits (asynchronous, the result goes to the data store)."""
         if not self.stiffness_get_client.service_is_ready():
             self.get_logger().warn(f"Service '/{IMPEDANCE_CONTROLLER}/get_parameters' is not available!")
             return
@@ -292,7 +292,7 @@ class GuiRosNode(Node):
             self.get_logger().error(f"Error reading stiffness: {e}")
 
     def apply_stiffness(self, frame: str, linear: list, angular: list):
-        """Frame und alle sechs Werte in EINEM set_parameters_atomically, Ergebnis landet im Data Store."""
+        """Frame and all six values in ONE set_parameters_atomically; the result goes to the data store."""
         if not self.stiffness_set_client.service_is_ready():
             self.store.set_stiffness_apply_result(False, f"Service '/{IMPEDANCE_CONTROLLER}/set_parameters_atomically' not available")
             return
@@ -331,7 +331,7 @@ class GuiRosNode(Node):
             self.store.set_stiffness_apply_result(False, str(e))
 
     def parameter_event_cb(self, msg: ParameterEvent):
-        """Änderungen anderer Clients (und eigene) an der Steifigkeit übernehmen."""
+        """Take over stiffness changes by other clients (and our own)."""
         if msg.node != f'/{IMPEDANCE_CONTROLLER}':
             return
         values = {}
@@ -344,7 +344,7 @@ class GuiRosNode(Node):
             self.store.update_stiffness(values)
 
     def parse_urdf_root_link(self, urdf_xml_str: str):
-        """Root-Link = der einzige Link, der in keinem Joint als 'child' vorkommt."""
+        """Root link = the only link that is no joint's 'child'."""
         try:
             root = ET.fromstring(urdf_xml_str)
             children = {joint.find('child').get('link') for joint in root.findall('joint')}
@@ -363,11 +363,11 @@ class GuiRosNode(Node):
         try:
             root = ET.fromstring(urdf_xml_str)
             
-            # Wir suchen nach allen 'joint'-Elementen
+            # all 'joint' elements
             for joint in root.findall('joint'):
                 joint_type = joint.get('type')
                 
-                # Nur Gelenke, die Limits besitzen (revolute = rotierend, prismatic = linear)
+                # Only joints with limits (revolute = rotating, prismatic = linear)
                 if joint_type in ['revolute', 'prismatic']:
                     limit_element = joint.find('limit')
                     if limit_element is not None:
@@ -382,7 +382,7 @@ class GuiRosNode(Node):
             return []
 
 def parse_stiffness_value(name, value):
-    """ParameterValue -> str / [3 floats] / float, None bei falschem Typ."""
+    """ParameterValue -> str / [3 floats] / float, None for a wrong type."""
     if name == 'cartesian_stiffness_frame':
         return value.string_value if value.type == ParameterType.PARAMETER_STRING else None
     if name in ('cartesian_linear_stiffness', 'cartesian_angular_stiffness'):
@@ -392,32 +392,31 @@ def parse_stiffness_value(name, value):
     return value.double_value if value.type == ParameterType.PARAMETER_DOUBLE else None
 
 def quat_to_rpy(q):
-    """Quaternion -> Roll/Pitch/Yaw (feste Achsen X-Y-Z) in rad."""
+    """Quaternion -> roll/pitch/yaw (fixed axes x-y-z) in rad."""
     roll = math.atan2(2.0 * (q.w * q.x + q.y * q.z), 1.0 - 2.0 * (q.x * q.x + q.y * q.y))
     pitch = math.asin(max(-1.0, min(1.0, 2.0 * (q.w * q.y - q.z * q.x))))
     yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
     return roll, pitch, yaw
 
 def main(args=None):
-    # 1. ROS initialisieren
+    # 1. Initialise ROS
     rclpy.init(args=args)
     
     # 2. Shared Data Store
     data_store = GuiDataStore()
     
-    # 3. ROS Node erstellen
+    # 3. ROS node
     ros_node = GuiRosNode(data_store)
     
-    # 4. ROS in einem eigenen Thread spinnen
-    # Damit rclpy.spin() nicht den Qt-Event-Loop blockiert
+    # 4. Spin ROS in its own thread,
+    # so rclpy.spin() does not block the Qt event loop
     ros_thread = threading.Thread(target=lambda: rclpy.spin(ros_node), daemon=True)
     ros_thread.start()
     
-    # 5. Qt Application starten
+    # 5. Start the Qt application
     app = QApplication(sys.argv)
     
-    # Hier übergibst du die ros_node an das Widget, 
-    # damit Buttons direkt Methoden der Node aufrufen können
+    # The window gets the ROS node, so buttons can call its methods directly
     window = RobotMainWindow(data_store, ros_node)
     window.show()
     
@@ -426,7 +425,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        # Sicherheit: letzten Twist-Befehl nullen
+        # Safety: zero the last twist command
         window.cartesian_page.shutdown()
         ros_node.destroy_node()
         if rclpy.ok():

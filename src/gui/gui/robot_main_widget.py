@@ -3,7 +3,6 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QScrollArea, QFr
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QTextCursor
 
-# Deine Widgets importieren
 from .telemetry_widget import TelemetryDashboard
 from .joint_jog_widget import JointJogWidget
 from .cartesian_jog_widget import CartesianJogWidget
@@ -20,21 +19,21 @@ class RobotMainWindow(QMainWindow):
         self.data_store = guiDataStore
         self.node = node
 
-        # --- HAUPT LAYOUT ---
+        # --- MAIN LAYOUT ---
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.main_layout = QVBoxLayout(self.central_widget)
 
-        # 1. OBEN: Navigation (Haupt-Modi)
+        # 1. TOP: header
         self.control_header = ControlHeader(self.data_store, self.node)
 
-        # 2. MITTE: Side-by-Side Content
+        # 2. MIDDLE: content side by side
         self.content_layout = QHBoxLayout()
         
-        # LINKS: Der Control Stack
+        # LEFT: the control stack
         self.init_nav_bar()
         self.left_column_container = QWidget()
-        self.left_column_container.setFixedWidth(400) # Die Breite gilt nun für die ganze Spalte
+        self.left_column_container.setFixedWidth(400) # width of the whole column
         self.left_column_layout = QVBoxLayout(self.left_column_container)
         self.left_column_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -49,12 +48,12 @@ class RobotMainWindow(QMainWindow):
         for page in self.pages:
             self.control_stack.addWidget(page)
 
-        # Steifigkeit: ein gemeinsames Panel unter dem Stack, da die Navigation während einer Mission gesperrt ist
+        # Stiffness: one shared panel below the stack, since navigation is locked during a mission
         self.stiffness_panel = StiffnessWidget(self.data_store, self.node)
 
-        # Seite + Panel scrollen, falls die Höhe nicht reicht (Joint-Seite + ausgeklapptes Panel)
+        # Scroll page + panel if the height is not enough (joint page + expanded panel)
         scroll_content = QWidget()
-        # Nie breiter als der Viewport (kein horizontales Scrollen), lange Inhalte werden umbrochen/abgeschnitten
+        # Never wider than the viewport (no horizontal scrolling); long content is wrapped or cut
         scroll_content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setContentsMargins(0, 0, 0, 0)
@@ -72,22 +71,22 @@ class RobotMainWindow(QMainWindow):
         self.left_column_layout.addWidget(self.left_scroll)
         self.fit_stack_to_page()
         
-        # RECHTS: Das neue, selbstverwaltete Dashboard
+        # RIGHT: the telemetry dashboard
         self.dashboard = TelemetryDashboard(self.data_store)
 
-        # Zusammenfügen der Mitte
+        # Assemble the middle
         self.content_layout.addWidget(self.left_column_container)
         self.content_layout.addWidget(self.dashboard, stretch=1)
 
         self.main_layout.addWidget(self.control_header, stretch=1)
         self.main_layout.addLayout(self.content_layout, stretch=4)
 
-        # 3. UNTEN: Log-Konsole
+        # 3. BOTTOM: log console
         self.init_log_console()
 
         self.resize(1400, 1000)
     
-        # Timer (ca. 30 FPS für flüssige Plots)
+        # Timer (~30 FPS for smooth plots)
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.global_update)
         self.update_timer.start(33)
@@ -95,9 +94,9 @@ class RobotMainWindow(QMainWindow):
         self.log_message("System initialized. Dashboard and Controls ready.")
 
     def init_nav_bar(self):
-        """Erstellt die obere Leiste zum Umschalten der linken Control-Seite."""
+        """Create the bar that switches the left control page."""
         self.nav_container = QWidget()
-        # Nebeneinander statt untereinander, spart Höhe für Seite + Steifigkeits-Panel
+        # Side by side instead of stacked: saves height for page + stiffness panel
         self.nav_layout = QHBoxLayout(self.nav_container)
         self.nav_layout.setContentsMargins(0, 0, 0, 4)
         
@@ -116,20 +115,20 @@ class RobotMainWindow(QMainWindow):
                         background-color: #3d3d3d; color: white; 
                     }
                     QPushButton:checked { 
-                        background-color: #27ae60;  /* Ein schönes Grün für den aktiven Modus */
+                        background-color: #27ae60;  /* green for the active mode */
                         border: 2px solid #2ecc71;
                     }
                     QPushButton:disabled { color: #7f8c8d; }
                     QPushButton:checked:disabled { color: #dfe6e9; }
                 """)
-            # Lambda nutzt hier den Default-Parameter i=idx, um den Scope zu fixieren
+            # default argument i=idx binds the index for the lambda
             btn.clicked.connect(lambda checked, i=idx: self.switch_gui_mode(i))
             self.nav_layout.addWidget(btn)
         self.btn_joint_jog.setChecked(True)
         self.main_layout.addWidget(self.nav_container)
 
     def init_log_console(self):
-        """Erstellt die Konsole am unteren Rand."""
+        """Create the log console at the bottom."""
         self.log_console = QTextEdit()
         self.log_console.setReadOnly(True)
         self.log_console.setMaximumHeight(120) 
@@ -144,30 +143,30 @@ class RobotMainWindow(QMainWindow):
         self.main_layout.addWidget(self.log_console, stretch=0)
 
     def switch_gui_mode(self, index):
-        """Schaltet nur den linken Control-Stack um."""
+        """Switch the left control stack only."""
         self.control_stack.setCurrentIndex(index)
         self.fit_stack_to_page()
-        # Auf der Compliance-Seite ist das Steifigkeits-Panel der Hauptinhalt
+        # On the compliance page the stiffness panel is the main content
         self.stiffness_panel.set_expanded(self.control_stack.currentWidget() is self.compliance_page)
         modes = ["JOINT", "CARTESIAN", "COMPLIANCE", "MOVEIT"]
         self.log_message(f"Gui Mode changed to: {modes[index]}")
 
     def fit_stack_to_page(self):
-        """QStackedWidget nimmt sonst die Höhe der größten Seite an, das Panel stünde weit unten."""
+        """Otherwise QStackedWidget takes the height of the largest page and the panel ends up far below."""
         for page in self.pages:
             policy = QSizePolicy.Policy.Preferred if page is self.control_stack.currentWidget() else QSizePolicy.Policy.Ignored
             page.setSizePolicy(QSizePolicy.Policy.Preferred, policy)
             page.adjustSize()
 
     def update_stiffness_visibility(self):
-        """Panel nur auf der Compliance-Seite und bei gewähltem Modus Compliant."""
+        """Show the panel only on the compliance page and when mode Compliant is selected."""
         page = self.control_stack.currentWidget()
         visible = page is self.compliance_page or page.execution_mode() == COMPLIANT
         if visible == self.stiffness_panel.isHidden():
             self.stiffness_panel.setVisible(visible)
 
     def global_update(self):
-        """Zentraler Timer-Aufruf. Das Dashboard aktualisiert alle seine Tiles selbst."""
+        """Central timer slot. The dashboard updates all its tiles itself."""
         self.dashboard.update_all()
         self.joint_page.update_widget()
         self.cartesian_page.update_widget()
@@ -180,13 +179,13 @@ class RobotMainWindow(QMainWindow):
         self.log_update()
 
     def update_nav_lock(self):
-        """Solange eine Mission aktiv ist, darf die Control-Seite nicht gewechselt werden."""
+        """The control page cannot be changed while a mission is active."""
         mission_active = bool(self.data_store.get_status()["active_node"])
         for btn in self.nav_buttons:
             btn.setEnabled(not mission_active)
 
     def closeEvent(self, event):
-        # Sicherheit: Null-Twist senden, da der Cartesian-Controller (noch) keinen Timeout hat
+        # Safety: send a zero twist, the Cartesian controller has no timeout (yet)
         self.cartesian_page.shutdown()
         super().closeEvent(event)
 
@@ -196,7 +195,7 @@ class RobotMainWindow(QMainWindow):
             self.log_console.append(log_entry)
             self.log_console.moveCursor(QTextCursor.MoveOperation.End)
 
-    # --- Event Handler für Logging ---
+    # --- Logging ---
     def log_message(self, message):
         from datetime import datetime
         ts = datetime.now().strftime("%H:%M:%S")

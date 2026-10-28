@@ -6,8 +6,8 @@ import math
 
 from .joint_tiles_widget import AxisTile
 
-# Anzeige in mm bzw. Grad (Daten im Store bleiben SI), max. 0.1 mm / 0.1° Auflösung.
-# min_range: kleinster Y-Bereich, damit Rauschen/Drift nicht formatfüllend aufgezoomt wird
+# Shown in mm or degrees (the store keeps SI units), at most 0.1 mm / 0.1° resolution.
+# min_range: smallest y range, so noise and drift are not zoomed to fill the plot
 LINEAR_DISPLAY = {
     "pos": {"unit": "mm", "scale": 1000.0, "decimals": 1, "min_range": 2.0},
     "speed": {"unit": "mm/s", "scale": 1000.0, "decimals": 1, "min_range": 2.0},
@@ -37,9 +37,9 @@ class TelemetryDashboard(QWidget):
         super().__init__()
         self.store = store
 
-        # Interner Zustand: zwei Kachel-Sätze, angezeigt wird self.tiles
+        # Internal state: two sets of tiles, self.tiles is the one shown
         self.mode = "joint"
-        self.joint_tiles = [] # Wird erst aufgebaut, sobald die URDF geladen ist
+        self.joint_tiles = [] # Built once the URDF is loaded
         self.cart_tiles = [
             AxisTile(i, f"TCP {name}", frame_key='axes', channels=("speed", "pos"), display=display)
             for i, (name, display) in enumerate(CARTESIAN_AXES)
@@ -48,14 +48,14 @@ class TelemetryDashboard(QWidget):
         self.nav_buttons = []
         self.num_grid_rows = 0
 
-        # Haupt-Layout für das gesamte Widget
+        # Main layout of the whole widget
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setSpacing(10)
 
-        # --- 1. Navigationsleiste (Bleibt oben fixiert) ---
+        # --- 1. Navigation bar (stays fixed at the top) ---
         self.nav_bar = QHBoxLayout()
 
-        # Umschalter Gelenk-/kartesischer Raum
+        # Toggle between joint and Cartesian space
         self.btn_mode_joint = QPushButton("Joint")
         self.btn_mode_cart = QPushButton("Cartesian")
         self.mode_group = QButtonGroup(self)
@@ -76,38 +76,38 @@ class TelemetryDashboard(QWidget):
         self.btn_grid.clicked.connect(self.show_grid)
         self.nav_bar.addWidget(self.btn_grid)
 
-        # Achsen-Buttons (J1..Jn bzw. X..Rz) werden je nach Modus neu befüllt
+        # Axis buttons (J1..Jn or X..Rz) are refilled depending on the mode
         self.axis_btn_layout = QHBoxLayout()
         self.nav_bar.addLayout(self.axis_btn_layout)
 
         self.main_layout.addLayout(self.nav_bar)
 
-        # --- 2. Die Scroll Area erstellen ---
+        # --- 2. Scroll area ---
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.scroll_area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
-        # --- 3. Das Stacked Widget als Inhalt für die Scroll Area ---
+        # --- 3. Stacked widget as content of the scroll area ---
         self.container = QWidget()
         self.container_layout = QVBoxLayout(self.container)
         self.container_layout.setContentsMargins(0, 0, 0, 0)
 
         self.display_stack = QStackedWidget()
 
-        # Ansicht A: Das dynamische Grid (immer 2 Spalten)
+        # View A: the dynamic grid (always 2 columns)
         self.grid_container = QWidget()
         self.grid_layout = QGridLayout(self.grid_container)
         self.grid_layout.setColumnStretch(0, 1)
         self.grid_layout.setColumnStretch(1, 1)
 
-        # Ansicht B: Der Fokus-Bereich
+        # View B: the focus view
         self.focus_container = QWidget()
         self.focus_layout = QVBoxLayout(self.focus_container)
         self.focus_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Ansicht C: Platzhalter, solange keine Daten/Achsen da sind
+        # View C: placeholder while there is no data or no axes
         self.placeholder_label = QLabel()
         self.placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.placeholder_label.setStyleSheet("color: #7f8c8d; font-size: 14px;")
@@ -116,25 +116,25 @@ class TelemetryDashboard(QWidget):
         self.display_stack.addWidget(self.focus_container) # Index 1
         self.display_stack.addWidget(self.placeholder_label) # Index 2
 
-        # Stack in den Container, Container in die ScrollArea
+        # Stack into the container, container into the scroll area
         self.container_layout.addWidget(self.display_stack)
         self.scroll_area.setWidget(self.container)
 
-        # ScrollArea zum Haupt-Layout hinzufügen
+        # Add the scroll area to the main layout
         self.main_layout.addWidget(self.scroll_area)
 
-        # Initialisierung der ersten Ansicht
+        # Initialise the first view
         self.set_mode("joint")
 
     def set_axis_limits(self, axis_data: list):
         """
-        Wird aus update_all aufgerufen, sobald die URDF geladen ist.
-        Baut die Gelenk-Kacheln dynamisch für X Achsen auf.
+        Called from update_all once the URDF is loaded.
+        Builds the joint tiles dynamically for the number of axes.
         """
         if not axis_data or self.joint_tiles:
-            return # Verhindert doppelte Initialisierung
+            return # prevents initialising twice
 
-        # Kacheln dynamisch erzeugen (Titel startet bei 1)
+        # Create the tiles dynamically (titles start at 1)
         self.joint_tiles.extend(
             AxisTile(i, f"JOINT {i + 1}", display=JOINT_DISPLAY) for i in range(len(axis_data))
         )
@@ -146,7 +146,7 @@ class TelemetryDashboard(QWidget):
         self.mode = mode
         self.tiles = self.joint_tiles if mode == "joint" else self.cart_tiles
 
-        # Achsen-Buttons neu aufbauen
+        # Rebuild the axis buttons
         self.clear_layout(self.axis_btn_layout)
         self.nav_buttons = []
         for i, tile in enumerate(self.tiles):
@@ -156,7 +156,7 @@ class TelemetryDashboard(QWidget):
             self.axis_btn_layout.addWidget(btn)
             self.nav_buttons.append(btn)
 
-        # Zeilen-Stretch an die neue Anzahl anpassen
+        # Adapt the row stretch to the new number of rows
         for r in range(self.num_grid_rows):
             self.grid_layout.setRowStretch(r, 0)
         self.num_grid_rows = (len(self.tiles) + 1) // 2
@@ -210,11 +210,11 @@ class TelemetryDashboard(QWidget):
         self.focus_layout.addWidget(target_tile)
 
     def update_all(self):
-        # Gelenk-Kacheln aufbauen, sobald die URDF da ist
+        # Build the joint tiles once the URDF is there
         if not self.joint_tiles:
             self.set_axis_limits(self.store.get_joint_limits())
 
-        # Platzhalter verlassen, sobald Daten da sind
+        # Leave the placeholder once there is data
         if self.display_stack.currentIndex() == 2:
             if not self.has_data():
                 return
@@ -226,6 +226,6 @@ class TelemetryDashboard(QWidget):
             frames = self.store.get_cartesian_plot_data()
         if not frames:
             return
-        # Nur die aktiven Kacheln plotten, die anderen sind ausgeblendet
+        # Only plot the active tiles, the others are hidden
         for tile in self.tiles:
             tile.update_plots(frames)

@@ -18,7 +18,7 @@ class JointJogWidget(QWidget):
         self.name = "JointJogWidget"
 
         self.request_action_client = RequestActionClient(self.node)
-        # Je Modus eine Instanz des JointStreamControllers, gleiche Schnittstelle unter anderem Namen
+        # One JointStreamController instance per mode: same interface under a different name
         self.joint_target_pubs = {
             mode: self.node.create_publisher(Float64MultiArray, f'/{name}/commands', 1)
             for mode, name in JOINT_STREAM_CONTROLLERS.items()
@@ -28,30 +28,30 @@ class JointJogWidget(QWidget):
             for mode, name in JOINT_STREAM_CONTROLLERS.items()
         }
         
-        # Interner Zustand
+        # Internal state
         self.limits = []
         self.num_joints = 0
         self.movement_enabled = False
                 
-        # Listen für dynamische UI-Elemente
+        # Lists of the dynamic UI elements
         self.sliders = []
         self.target_labels = []
         self.actual_labels = []
         self.last_sent_positions = []
 
-        # Haupt-Layout vorbereiten (bleibt leer, bis set_axis_limits aufgerufen wird)
+        # Main layout (stays empty until set_axis_limits is called)
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setSpacing(10)
         
-        # Initialer Platzhalter
+        # Initial placeholder
         self.placeholder_label = QLabel("Waiting for URDF joint limits...")
         self.placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.main_layout.addWidget(self.placeholder_label)
 
     def set_axis_limits(self, axis_data: list):
         """
-        Erwartet Liste von Tuples: [(min, max, v_max_rad_s), ...]
-        v_max_rad_s: Maximale Geschwindigkeit in Radiant pro Sekunde.
+        Expects a list of tuples: [(min, max, v_max_rad_s), ...]
+        v_max_rad_s: maximum velocity in rad/s.
         """
         if not axis_data:
             return
@@ -62,12 +62,12 @@ class JointJogWidget(QWidget):
         self.last_sent_positions = [0.0] * self.num_joints
 
         for min_rad, max_rad, _ in axis_data:
-            # 1. Positionslimits für die Slider (in Grad)
+            # 1. Position limits of the sliders (degrees)
             min_deg = math.degrees(min_rad)
             max_deg = math.degrees(max_rad)
             self.limits.append((min_deg, max_deg))
 
-        # Platzhalter entfernen
+        # Remove the placeholder
         self.main_layout.removeWidget(self.placeholder_label)
         self.placeholder_label.hide()
         self.placeholder_label.deleteLater()
@@ -95,7 +95,7 @@ class JointJogWidget(QWidget):
         # --- 2. SPEED OVERRIDE SECTION ---
         self.setup_speed_slider_ui()
 
-        # --- 3. DYNAMISCHE ACHSEN ---
+        # --- 3. AXES (dynamic) ---
         self.scroll_area = QFrame()
         self.scroll_area.setFrameShape(QFrame.Shape.StyledPanel)
         scroll_layout = QVBoxLayout(self.scroll_area)
@@ -103,7 +103,7 @@ class JointJogWidget(QWidget):
         for i in range(self.num_joints):
             axis_layout = QVBoxLayout()
             
-            # Zeile 1: Name und Echte Position (ACT)
+            # Row 1: name and actual position (ACT)
             label_row = QHBoxLayout()
             name_label = QLabel(f"Axis {i+1}")
             name_label.setStyleSheet("font-weight: bold; color: #ecf0f1;")
@@ -116,7 +116,7 @@ class JointJogWidget(QWidget):
             label_row.addWidget(actual_display)
             axis_layout.addLayout(label_row)
 
-            # Zeile 2: Slider und Soll-Position (SET)
+            # Row 2: slider and target position (SET)
             slider_row = QHBoxLayout()
             min_val, max_val = self.limits[i]
             
@@ -143,7 +143,7 @@ class JointJogWidget(QWidget):
         self.main_layout.addWidget(self.scroll_area)
         self.main_layout.addStretch()
 
-        # Initialen Sperr-Zustand erzwingen
+        # Apply the initial lock state
         self.update_ui_lock_state()
 
     def setup_speed_slider_ui(self):
@@ -163,15 +163,14 @@ class JointJogWidget(QWidget):
         speed_layout.addLayout(speed_header)
         
         self.speed_slider = QSlider(Qt.Orientation.Horizontal)
-        # Controller akzeptiert nur (0, 1]
+        # The controller only accepts (0, 1]
         self.speed_slider.setRange(10, 100)
         self.speed_slider.setValue(100)
         
-        # --- HIER DIE ÄNDERUNG ---
-        # valueChanged ändert NUR die Textanzeige (flüssig beim Ziehen)
+        # valueChanged only updates the text (smooth while dragging)
         self.speed_slider.valueChanged.connect(lambda val: self.speed_display.setText(f"{val}%"))
         
-        # sliderReleased feuert erst, wenn die Maus losgelassen wird (Absetzen!)
+        # sliderReleased fires only when the mouse is released
         self.speed_slider.sliderReleased.connect(self.on_speed_slider_released)
         
         speed_layout.addWidget(self.speed_slider)
@@ -184,7 +183,7 @@ class JointJogWidget(QWidget):
         self.send_speed_scale()
 
     def send_speed_scale(self):
-        """Speed Scale an die Instanz des gewählten Modus senden (jede Instanz hat ihren eigenen Wert)."""
+        """Send the speed scale to the instance of the selected mode (each instance has its own value)."""
         mode = self.execution_toggle.mode()
         client = self.speed_scale_clients[mode]
         target = self.speed_slider.value() / 100
@@ -211,7 +210,7 @@ class JointJogWidget(QWidget):
             self.node.get_logger().error(f"Failed to send speed scale service request: {e}")
 
     def on_lock_toggle_clicked(self, is_checked):
-        """Wird aufgerufen, wenn der Benutzer manuell auf den Freischalt-Button klickt."""
+        """Called when the user clicks the unlock button."""
         self.btn_toggle_lock.blockSignals(True)
         self.btn_toggle_lock.setChecked(self.movement_enabled)
         self.btn_toggle_lock.blockSignals(False)
@@ -228,7 +227,7 @@ class JointJogWidget(QWidget):
             controller_names=controller_set(JOINT_STREAM_CONTROLLERS, self.execution_toggle.mode()))
 
     def update_ui_lock_state(self):
-        """Aktiviert oder deaktiviert alle Eingabeelemente basierend auf movement_enabled."""
+        """Enable or disable all inputs according to movement_enabled."""
         for slider in self.sliders:
             slider.setEnabled(self.movement_enabled)
         self.speed_slider.setEnabled(self.movement_enabled)
@@ -248,27 +247,26 @@ class JointJogWidget(QWidget):
             self.movement_enabled = allowed
             self.update_ui_lock_state()
             
-            # Sicherheits-Feature: Beim frisch Freischalten snappen wir die Slider 
-            # sofort auf den echten Roboterzustand, um Start-Sprünge zu verhindern
+            # Safety: right after unlocking, snap the sliders 
+            # to the actual robot state, so the robot does not jump at the start
             if self.movement_enabled:
                 self.sync_sliders_to_actual()
-                # Frisch aktivierte Instanz auf den angezeigten Speed Scale bringen
+                # Bring the freshly activated instance to the displayed speed scale
                 self.send_speed_scale()
 
     def update_widget(self):
         """
-        Wird zyklisch (z.B. mit 50Hz) vom übergeordneten GUI-Timer aufgerufen.
-        Nimmt jetzt keine Argumente mehr entgegen.
+        Called periodically by the main GUI timer (~30 Hz).
         """
         if self.num_joints == 0:
             axis_data = self.store.get_joint_limits()
             self.set_axis_limits(axis_data)
             return
 
-        # 1. Aktuelle IST-Werte aus dem Store holen und anzeigen
+        # 1. Show the current actual values from the store
         actual_positions_rad = self.store.get_current_positions() 
         
-        # DIREKTE KONVERTIERUNG: Für die Anzeige im Widget rechnen wir Radian in Grad um
+        # The store holds rad, the widget shows degrees
         self.current_values_deg = [math.degrees(rad) for rad in actual_positions_rad]
         for i, val in enumerate(self.current_values_deg):
             if i < len(self.actual_labels):
@@ -285,7 +283,7 @@ class JointJogWidget(QWidget):
         else:
             self.set_movement_allowed(False)
 
-        # 2. Zyklisches Streaming an den Roboter (nur wenn von FSM freigegeben)
+        # 2. Stream to the robot periodically (only while the mission allows it)
         if self.movement_enabled:
             target_positions_deg = [s.value() / 100.0 for s in self.sliders]
             for i in range(self.num_joints):
@@ -295,7 +293,7 @@ class JointJogWidget(QWidget):
             self.joint_target_pubs[self.execution_toggle.mode()].publish(msg)
 
     def sync_sliders_to_actual(self):
-        """Setzt die Slider exakt dorthin, wo der Roboter gerade physikalisch steht."""
+        """Set the sliders exactly to where the robot currently is."""
         if hasattr(self, 'current_values_deg'):
             for i, val in enumerate(self.current_values_deg):
                 if i < len(self.sliders):

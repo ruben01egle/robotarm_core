@@ -15,7 +15,7 @@ class ControlHeader(QWidget):
         self.name = "ControlHeaderWidget"
 
     def init_ui(self):
-        # Dunkles Design für den Header
+        # Dark style for the header
         self.setStyleSheet("""
             ControlHeader {
                 background-color: #2c3e50;
@@ -28,12 +28,12 @@ class ControlHeader(QWidget):
         layout.setContentsMargins(20, 0, 20, 0)
         layout.setSpacing(20)
 
-        # --- SEKTION: KONNEKTIVITÄT ---
+        # --- SECTION: CONNECTIVITY ---
         self.conn_label = QLabel("● DISCONNECTED")
         self.conn_label.setStyleSheet("color: #e74c3c; font-weight: bold; font-size: 15px;")
         layout.addWidget(self.conn_label)
         
-        # --- SEKTION: STATE MACHINE ---
+        # --- SECTION: STATE MACHINE ---
         self.state_label = QLabel("STATE: UNKNOWN")
         self.state_label.setStyleSheet("""
             background-color: #1a252f; 
@@ -46,7 +46,7 @@ class ControlHeader(QWidget):
         """)
         layout.addWidget(self.state_label)
 
-        # --- SEKTION: ACTIVE NODES & CONTROLLERS (Neu) ---
+        # --- SECTION: ACTIVE NODE & CONTROLLERS ---
         self.info_layout = QVBoxLayout()
         self.info_layout.setContentsMargins(0, 0, 0, 0)
         self.info_layout.setSpacing(2)
@@ -62,10 +62,10 @@ class ControlHeader(QWidget):
         self.info_layout.addWidget(self.controllers_label)
         layout.addLayout(self.info_layout)
 
-        # Platzhalter nach rechts schieben
+        # Spacer, pushes the following to the right
         layout.addStretch()
 
-        # --- SEKTION: AKTIONEN ---
+        # --- SECTION: ACTIONS ---
         # Arm Robot
         self.btn_arm = QPushButton("ARM ROBOT")
         self.btn_arm.setCheckable(True)
@@ -84,12 +84,12 @@ class ControlHeader(QWidget):
         self.btn_arm.clicked.connect(self.handle_arm_click)
         layout.addWidget(self.btn_arm)
 
-        # Stop (Dynamisches Farb-Design via update_status)
+        # Stop (colours set dynamically in update_status)
         self.btn_stop = QPushButton("STOP")
         self.btn_stop.setCheckable(True)
         self.btn_stop.setFixedHeight(42)
         self.btn_stop.setFixedWidth(110)
-        # Basis-Style, Farben werden dynamisch in update_status gesetzt
+        # Base style, colours are set dynamically in update_status
         self.btn_stop.setStyleSheet("color: white; font-weight: bold; border-radius: 4px; font-size: 13px;")
         self.btn_stop.clicked.connect(self.handle_stop_click)
         layout.addWidget(self.btn_stop)
@@ -137,7 +137,7 @@ class ControlHeader(QWidget):
             node_name=self.name)
 
     def update_status(self):
-        """Zentrale Update-Logik für den Header."""
+        """Update the whole header from the status."""
         status = self.store.get_status()
         connected = status["connected"]
         state = status["state"]
@@ -146,7 +146,7 @@ class ControlHeader(QWidget):
         active_node = status["active_node"]
         active_controllers = ", ".join(status["active_controllers"])
         
-        # 1. Verbindung anlegen
+        # 1. Connection
         color = "#2ecc71" if connected else "#e74c3c"
         status_text = "● CONNECTED" if connected else "● DISCONNECTED"
         self.conn_label.setText(status_text)
@@ -155,25 +155,25 @@ class ControlHeader(QWidget):
         # 2. State
         self.state_label.setText(f"STATE: {state.upper()}")
 
-        # 3. Active Nodes & Controllers Texte aktualisieren
+        # 3. Active node & controllers
         self.nodes_label.setText(f"Nodes: {active_node if active_node else 'none'}")
         self.controllers_label.setText(f"Controllers: {active_controllers if active_controllers else 'none'}")
 
-        # 4. Arm-Button Sync
+        # 4. Sync the arm button
         if armed != self.btn_arm.isChecked():
             self.btn_arm.blockSignals(True)
             self.btn_arm.setChecked(armed)
             self.btn_arm.blockSignals(False)
         self.btn_arm.setText("DISARM" if armed else "ARM ROBOT")
 
-        # 5. Stop-Button Sync & Dynamisches Styling (Rot/Grün Wechsel)
+        # 5. Sync the stop button and its colour (red/green)
         if stopped != self.btn_stop.isChecked():
             self.btn_stop.blockSignals(True)
-            self.btn_stop.setChecked(stopped)  # FEHLER BEHOBEN: War vorher fälschlicherweise 'armed'
+            self.btn_stop.setChecked(stopped)
             self.btn_stop.blockSignals(False)
         
         if stopped:
-            # Roboter steht -> Button bietet "RESUME" an (Grün)
+            # Robot stopped: the button offers "RESUME" (green)
             self.btn_stop.setText("RESUME")
             self.btn_stop.setStyleSheet("""
                 QPushButton { 
@@ -182,7 +182,7 @@ class ControlHeader(QWidget):
                 QPushButton:hover { background-color: #2ecc71; }
             """)
         else:
-            # Roboter läuft -> Button bietet "STOP" an (Kräftiges Rot/Orange)
+            # Robot running: the button offers "STOP" (red/orange)
             self.btn_stop.setText("STOP")
             self.btn_stop.setStyleSheet("""
                 QPushButton { 

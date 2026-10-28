@@ -6,9 +6,9 @@ from PyQt6.QtCore import Qt
 
 from .controller_modes import GC_CONTROLLER, IMPEDANCE_CONTROLLER
 
-# Slider-Auflösung: 0.1 N/m bzw. 0.1 Nm/rad
+# Slider resolution: 0.1 N/m or 0.1 Nm/rad
 SLIDER_SCALE = 10
-# Ohne Antwort auf set_parameters_atomically die Bedienelemente nach dieser Zeit wieder freigeben
+# Without a response to set_parameters_atomically, release the controls again after this time
 APPLY_TIMEOUT_S = 5.0
 
 FRAMES = ("base", "tcp")
@@ -17,9 +17,9 @@ AXES = ("x", "y", "z")
 
 class StiffnessWidget(QFrame):
     """
-    Steifigkeit des cartesian_impedance_controller. Zwei Wertesätze:
-    committed = was der Controller verwendet (Data Store), staged = was der Benutzer gerade bearbeitet.
-    Nur "Apply now" sendet etwas (Frame und alle sechs Werte in einem set_parameters_atomically).
+    Stiffness of the cartesian_impedance_controller. Two sets of values:
+    committed = what the controller uses (data store), staged = what the user is editing.
+    Only "Apply now" sends anything (frame and all six values in one set_parameters_atomically).
     """
     def __init__(self, store, node, parent=None):
         super().__init__(parent)
@@ -32,7 +32,7 @@ class StiffnessWidget(QFrame):
         self.apply_started = None
         self.changed_underneath = False
 
-        # group ('linear' / 'angular') -> Liste je Achse
+        # group ('linear' / 'angular') -> list per axis
         self.sliders = {"linear": [], "angular": []}
         self.spins = {"linear": [], "angular": []}
         self.dots = {"linear": [], "angular": []}
@@ -48,7 +48,7 @@ class StiffnessWidget(QFrame):
         layout.setContentsMargins(8, 4, 8, 6)
         layout.setSpacing(4)
 
-        # --- KOPFZEILE (immer sichtbar) ---
+        # --- HEADER ROW (always visible) ---
         head = QHBoxLayout()
         self.btn_expand = QPushButton()
         self.btn_expand.setCheckable(True)
@@ -68,7 +68,7 @@ class StiffnessWidget(QFrame):
         head.addWidget(self.pending_label)
         layout.addLayout(head)
 
-        # --- INHALT (ausklappbar) ---
+        # --- CONTENT (collapsible) ---
         self.body = QWidget()
         body = QVBoxLayout(self.body)
         body.setContentsMargins(0, 0, 0, 0)
@@ -107,7 +107,7 @@ class StiffnessWidget(QFrame):
         self.frame_hint.hide()
         body.addWidget(self.frame_hint)
 
-        # Achsen
+        # Axes
         for group, title, prefix in (("linear", "Linear [N/m]", ""), ("angular", "Angular [Nm/rad]", "r")):
             group_row = QHBoxLayout()
             group_label = QLabel(f"<b>{title}</b>")
@@ -180,18 +180,18 @@ class StiffnessWidget(QFrame):
 
         layout.addWidget(self.body)
 
-    # --- Ein-/Ausklappen ---
+    # --- Expand / collapse ---
     def set_expanded(self, expanded: bool):
         if self.btn_expand.isChecked() != expanded:
-            self.btn_expand.setChecked(expanded)  # ruft set_expanded erneut auf
+            self.btn_expand.setChecked(expanded)  # calls set_expanded again
             return
         self.btn_expand.setText(("▾" if expanded else "▸") + " Stiffness")
         self.body.setVisible(expanded)
-        # Zusammenfassung nur eingeklappt, ausgeklappt stehen die Werte darunter
+        # Summary only when collapsed; expanded, the values are shown below
         self.summary_label.setVisible(not expanded)
         self.refresh_pending()
 
-    # --- Benutzereingaben (ändern nur staged) ---
+    # --- User input (changes staged only) ---
     def on_frame_selected(self, frame):
         if self.staged is not None:
             self.staged["frame"] = frame
@@ -201,7 +201,7 @@ class StiffnessWidget(QFrame):
         if self.staged is None:
             return
         self.staged[group][idx] = value
-        # Slider und Feld synchron halten, ohne erneut auszulösen
+        # Keep slider and field in sync without triggering again
         self.set_axis_display(group, idx, value)
         self.refresh_pending()
 
@@ -219,7 +219,7 @@ class StiffnessWidget(QFrame):
         self.refresh_enabled()
         self.node.apply_stiffness(self.staged["frame"], list(self.staged["linear"]), list(self.staged["angular"]))
 
-    # --- Anzeige ---
+    # --- Display ---
     def set_axis_display(self, group, idx, value):
         slider = self.sliders[group][idx]
         spin = self.spins[group][idx]
@@ -248,11 +248,11 @@ class StiffnessWidget(QFrame):
         self.refresh_pending()
 
     def apply_limits(self):
-        """Slider-Bereiche [0, Limit]; staged Werte außerhalb werden begrenzt (sind dann pending)."""
+        """Slider ranges [0, limit]; staged values outside are clamped (and then pending)."""
         for group, limit in (("linear", self.committed["max_linear"]), ("angular", self.committed["max_angular"])):
             self.range_labels[group].setText(f"0 … {limit:g}")
             for idx in range(3):
-                # setRange begrenzt den Wert und löst sonst valueChanged -> staged aus
+                # setRange clamps the value and would otherwise trigger valueChanged -> staged
                 for widget in (self.sliders[group][idx], self.spins[group][idx]):
                     widget.blockSignals(True)
                 self.sliders[group][idx].setRange(0, round(limit * SLIDER_SCALE))
@@ -319,13 +319,13 @@ class StiffnessWidget(QFrame):
             self.info_label.setVisible(bool(text))
 
     def update_widget(self):
-        """Wird zyklisch vom übergeordneten GUI-Timer aufgerufen (~30 Hz)."""
+        """Called periodically by the main GUI timer (~30 Hz)."""
         result = self.store.pop_stiffness_apply_result()
         if result is not None:
             successful, reason = result
             self.apply_started = None
             if not successful:
-                # Staged bleibt zum Korrigieren stehen, committed unverändert
+                # Staged stays for correcting, committed is unchanged
                 self.result_label.setText(f"✖ Rejected: {reason}")
                 self.result_label.show()
             self.refresh_enabled()
@@ -346,7 +346,7 @@ class StiffnessWidget(QFrame):
                 self.committed = committed
                 self.apply_limits()
                 if self.staged is None or not had_pending:
-                    # Ohne eigene Änderungen folgt staged dem committed Stand
+                    # Without own changes, staged follows committed
                     self.load_staged_from_committed()
                 else:
                     self.changed_underneath = self.is_pending()

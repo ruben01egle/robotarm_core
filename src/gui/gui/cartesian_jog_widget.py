@@ -12,17 +12,17 @@ from robotarm_interface.msg import CartesianIncrement
 from .controller_modes import (ExecutionToggle, CARTESIAN_JOG_CONTROLLERS, POSITION, COMPLIANT,
                                controller_set, set_available)
 
-# Slider-Auflösung: -SLIDER_RESOLUTION ... +SLIDER_RESOLUTION entspricht -v_max ... +v_max
+# Slider resolution: -SLIDER_RESOLUTION ... +SLIDER_RESOLUTION maps to -v_max ... +v_max
 SLIDER_RESOLUTION = 1000
 
-# Schrittweite pro Klick (Controller begrenzt auf max. 3 mm / 3° pro Nachricht)
+# Step per click (the controller limits it to 3 mm / 3° per message)
 INC_LINEAR = 0.001               # m (1 mm)
 INC_ANGULAR = math.radians(1.0)  # rad (1°)
 INC_LABELS = {"linear": "1 mm", "angular": "1°"}
 
-# header.frame_id für die Jog-Controller
-FRAME_BASE = ""      # leer = Root-Link der URDF (Basis), unabhängig vom Link-Namen
-FRAME_TOOL = "tcp"   # TCP-Link, Name ist fest vorgegeben
+# header.frame_id for the jog controllers
+FRAME_BASE = ""      # empty = root link of the URDF (base), whatever its name
+FRAME_TOOL = "tcp"   # TCP link, the name is fixed
 
 FRAME_HINTS = {
     FRAME_BASE: "Base frame · rotation about TCP",
@@ -32,8 +32,8 @@ FRAME_HINTS = {
 
 class SpringBackSlider(QSlider):
     """
-    Slider, der beim Loslassen immer auf 0 zurückspringt.
-    Mausrad und Tastatur sind deaktiviert, damit kein Wert "stehen bleiben" kann.
+    Slider that always springs back to 0 when released.
+    Mouse wheel and keyboard are disabled, so no value can "stick".
     """
     def __init__(self, parent=None):
         super().__init__(Qt.Orientation.Horizontal, parent)
@@ -53,7 +53,7 @@ class SpringBackSlider(QSlider):
 
 
 class CartesianJogWidget(QWidget):
-    # (Anzeigename, Kurzname, Twist-Feld, Komponente, Einheit)
+    # (display name, short name, twist field, component, unit)
     AXES = [
         ("Linear X", "X", "linear", "x", "m/s"),
         ("Linear Y", "Y", "linear", "y", "m/s"),
@@ -70,23 +70,23 @@ class CartesianJogWidget(QWidget):
         self.name = "CartesianJogWidget"
 
         self.request_action_client = RequestActionClient(self.node)
-        # Je Modus eine Instanz des CartesianJogControllers, gleiche Schnittstelle unter anderem Namen.
-        # Twist-Protokoll: nur während aktivem Jog zyklisch senden (Watchdog 250 ms), beim Loslassen
-        # genau EIN Null-Twist, im Leerlauf nichts. Jeder Twist (auch Null) bricht ein laufendes Inkrement ab.
+        # One CartesianJogController instance per mode: same interface under a different name.
+        # Twist protocol: send periodically only while jogging (watchdog 250 ms), exactly ONE zero twist
+        # on release, nothing while idle. Every twist (zero too) aborts a running increment.
         self.twist_pubs = {
             mode: self.node.create_publisher(TwistStamped, f'/{name}/twist_cmds', 10)
             for mode, name in CARTESIAN_JOG_CONTROLLERS.items()
         }
-        # Inkremente: genau eine Nachricht pro Klick, relativ zur aktuellen Position, nicht streamen
+        # Increments: exactly one message per click, relative to the current position, not streamed
         self.increment_pubs = {
             mode: self.node.create_publisher(CartesianIncrement, f'/{name}/increment_cmds', 10)
             for mode, name in CARTESIAN_JOG_CONTROLLERS.items()
         }
 
-        # Interner Zustand
+        # Internal state
         self.jogging = False
         self.frame_id = FRAME_BASE
-        # Controller-Name -> (max_linear, max_angular), Limits können je Instanz verschieden sein
+        # controller name -> (max_linear, max_angular); limits may differ per instance
         self.velocity_limits = {}
         self.ui_ready = False
         self.movement_enabled = False
@@ -97,7 +97,7 @@ class CartesianJogWidget(QWidget):
         self.limit_labels = []
         self.increment_buttons = []
 
-        # Haupt-Layout vorbereiten (bleibt leer, bis die Controller-Limits gelesen wurden)
+        # Main layout (stays empty until the controller limits have been read)
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setSpacing(10)
 
@@ -105,19 +105,19 @@ class CartesianJogWidget(QWidget):
         self.placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.main_layout.addWidget(self.placeholder_label)
 
-        # Fokusverlust des Fensters -> sofort stoppen
+        # Window loses focus: stop immediately
         app = QApplication.instance()
         if app is not None:
             app.applicationStateChanged.connect(self.on_application_state_changed)
 
     def build_ui(self, limits: dict):
-        """Wird aufgebaut, sobald die Limits mindestens einer Jog-Instanz gelesen wurden."""
+        """Built once the limits of at least one jog instance have been read."""
         if not limits:
             return
 
         self.velocity_limits = limits
 
-        # Platzhalter entfernen
+        # Remove the placeholder
         self.main_layout.removeWidget(self.placeholder_label)
         self.placeholder_label.hide()
         self.placeholder_label.deleteLater()
@@ -143,7 +143,7 @@ class CartesianJogWidget(QWidget):
         self.execution_toggle.mode_changed.connect(lambda _: self.update_limit_labels())
         self.main_layout.addWidget(self.execution_toggle)
 
-        # --- 2. WARNUNG BEI UNERWARTETEM ABSCHALTEN ---
+        # --- 2. WARNING ON UNEXPECTED DISENGAGE ---
         self.warning_label = QLabel("")
         self.warning_label.setWordWrap(True)
         self.warning_label.setStyleSheet("""
@@ -153,8 +153,8 @@ class CartesianJogWidget(QWidget):
         self.warning_label.hide()
         self.main_layout.addWidget(self.warning_label)
 
-        # --- 3. KOORDINATENSYSTEM (Base / Tool) ---
-        # Umschalten ist auch während der Bewegung erlaubt, der Controller blendet weich über.
+        # --- 3. FRAME (base / tool) ---
+        # Switching is allowed while moving, the controller blends smoothly.
         frame_row = QHBoxLayout()
         btn_base = QPushButton("Base")
         btn_base.setToolTip("Jog along the fixed robot base axes")
@@ -174,13 +174,13 @@ class CartesianJogWidget(QWidget):
 
         self.frame_hint = QLabel(FRAME_HINTS[self.frame_id])
         self.frame_hint.setStyleSheet("color: #95a5a6; font-size: 11px;")
-        # Umbrechen statt die Spalte zu verbreitern (Tool-Hinweis ist deutlich länger)
+        # Wrap instead of widening the column (the tool hint is much longer)
         self.frame_hint.setWordWrap(True)
         frame_row.addWidget(self.frame_hint, stretch=1)
         frame_row.addStretch()
         self.main_layout.addLayout(frame_row)
 
-        # --- 4. ACHSEN ---
+        # --- 4. AXES ---
         self.axes_frame = QFrame()
         self.axes_frame.setFrameShape(QFrame.Shape.StyledPanel)
         axes_layout = QVBoxLayout(self.axes_frame)
@@ -188,7 +188,7 @@ class CartesianJogWidget(QWidget):
         for i, (axis_name, short_name, field, _, unit) in enumerate(self.AXES):
             axis_layout = QVBoxLayout()
 
-            # Zeile 1: Name und Limit (Text je Modus in update_limit_labels)
+            # Row 1: name and limit (text per mode in update_limit_labels)
             label_row = QHBoxLayout()
             name_label = QLabel(axis_name)
             name_label.setStyleSheet("font-weight: bold;")
@@ -202,7 +202,7 @@ class CartesianJogWidget(QWidget):
             label_row.addWidget(limit_label)
             axis_layout.addLayout(label_row)
 
-            # Zeile 2: Inkrement-Buttons, Slider und Soll-Geschwindigkeit
+            # Row 2: increment buttons, slider and target velocity
             slider_row = QHBoxLayout()
             axis_tag = QLabel(short_name)
             axis_tag.setFixedWidth(32)
@@ -213,7 +213,7 @@ class CartesianJogWidget(QWidget):
             """)
             slider = SpringBackSlider()
 
-            # Nur der Sollwert, die Einheit steht schon beim Limit
+            # Only the target value, the unit is shown with the limit
             target_display = QLabel(f"{0.0:+.3f}")
             target_display.setFixedWidth(52)
             target_display.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -221,7 +221,7 @@ class CartesianJogWidget(QWidget):
 
             slider.valueChanged.connect(lambda val, idx=i: self.update_target_label(idx, self.slider_to_velocity(idx, val)))
 
-            # Inkrement-Buttons: minus links, plus rechts vom Slider (wie die Slider-Richtung)
+            # Increment buttons: minus left, plus right of the slider (same as the slider direction)
             btn_minus = self.make_increment_button(i, -1, f"−{INC_LABELS[field]}", short_name)
             btn_plus = self.make_increment_button(i, +1, f"+{INC_LABELS[field]}", short_name)
 
@@ -256,7 +256,7 @@ class CartesianJogWidget(QWidget):
 
         self.ui_ready = True
 
-        # Initialen Sperr-Zustand erzwingen
+        # Apply the initial lock state
         self.update_limit_labels()
         self.update_ui_lock_state()
 
@@ -274,7 +274,7 @@ class CartesianJogWidget(QWidget):
         return self.execution_toggle.mode() if self.ui_ready else None
 
     def current_limits(self):
-        """Limits der Instanz des gewählten Modus oder None, solange nicht gelesen."""
+        """Limits of the instance of the selected mode, or None while not read."""
         return self.velocity_limits.get(CARTESIAN_JOG_CONTROLLERS[self.execution_toggle.mode()])
 
     def axis_max(self, idx):
@@ -287,7 +287,7 @@ class CartesianJogWidget(QWidget):
         known = self.current_limits() is not None
         for i, label in enumerate(self.limit_labels):
             label.setText(f"max ±{self.axis_max(i):.3f} {self.AXES[i][4]}" if known else "limits not read yet")
-        # Ohne Limits keine Freigabe möglich (Slider wären wirkungslos)
+        # No unlocking without limits (the sliders would have no effect)
         self.btn_toggle_lock.setEnabled(known or self.movement_enabled)
 
     def slider_to_velocity(self, idx, slider_value):
@@ -312,7 +312,7 @@ class CartesianJogWidget(QWidget):
         self.twist_pubs[self.execution_toggle.mode()].publish(msg)
 
     def publish_increment(self, idx, sign):
-        """Genau eine Inkrement-Nachricht pro Klick für eine Achse."""
+        """Exactly one increment message per click for one axis."""
         _, _, field, component, _ = self.AXES[idx]
         step = INC_LINEAR if field == "linear" else INC_ANGULAR
 
@@ -323,7 +323,7 @@ class CartesianJogWidget(QWidget):
         self.increment_pubs[self.execution_toggle.mode()].publish(msg)
 
     def zero_all(self):
-        """Setzt alle Slider auf 0 und sendet sofort einen Null-Twist (Soft-Stop, bricht auch Inkremente ab)."""
+        """Set all sliders to 0 and send a zero twist right away (soft stop, also aborts increments)."""
         if not self.ui_ready:
             return
         for i, slider in enumerate(self.sliders):
@@ -335,7 +335,7 @@ class CartesianJogWidget(QWidget):
         self.publish_twist([0.0] * len(self.AXES))
 
     def shutdown(self):
-        """Beim Schließen der GUI: Null-Twist an beide Instanzen senden, damit der Arm nicht weiterfährt."""
+        """On closing the GUI: send a zero twist to both instances, so the arm does not keep moving."""
         try:
             msg = TwistStamped()
             msg.header.stamp = self.node.get_clock().now().to_msg()
@@ -351,12 +351,12 @@ class CartesianJogWidget(QWidget):
             self.zero_all()
 
     def hideEvent(self, event):
-        # Seitenwechsel im Control-Stack
+        # Page change in the control stack
         self.zero_all()
         super().hideEvent(event)
 
     def on_lock_toggle_clicked(self, is_checked):
-        """Wird aufgerufen, wenn der Benutzer manuell auf den Freischalt-Button klickt."""
+        """Called when the user clicks the unlock button."""
         self.btn_toggle_lock.blockSignals(True)
         self.btn_toggle_lock.setChecked(self.movement_enabled)
         self.btn_toggle_lock.blockSignals(False)
@@ -369,7 +369,7 @@ class CartesianJogWidget(QWidget):
             self.zero_all()
 
         def cb(response):
-            # Abgelehnter Disengage -> späteres Abschalten wäre wieder "unerwartet"
+            # Disengage refused: a later disengage would count as "unexpected" again
             if not is_checked and not response.success:
                 self.disengage_requested = False
 
@@ -381,7 +381,7 @@ class CartesianJogWidget(QWidget):
             controller_names=controller_set(CARTESIAN_JOG_CONTROLLERS, self.execution_toggle.mode()))
 
     def update_ui_lock_state(self):
-        """Aktiviert oder deaktiviert alle Eingabeelemente basierend auf movement_enabled."""
+        """Enable or disable all inputs according to movement_enabled."""
         for widget in self.sliders + self.increment_buttons:
             widget.setEnabled(self.movement_enabled)
         self.execution_toggle.set_locked(self.movement_enabled)
@@ -406,7 +406,7 @@ class CartesianJogWidget(QWidget):
             self.disengage_requested = False
             self.warning_label.hide()
         else:
-            # Immer mit Null-Slidern in den gesperrten Zustand
+            # Always enter the locked state with zeroed sliders
             self.zero_all()
             if not self.disengage_requested:
                 text = f"Movement disengaged by system (state: {state}). See log for reason."
@@ -418,7 +418,7 @@ class CartesianJogWidget(QWidget):
         self.update_ui_lock_state()
 
     def update_widget(self):
-        """Wird zyklisch vom übergeordneten GUI-Timer aufgerufen (~30 Hz) und streamt den Twist während des Jogs."""
+        """Called periodically by the main GUI timer (~30 Hz); streams the twist while jogging."""
         if not self.ui_ready:
             self.build_ui(self.store.get_cartesian_limits())
             return
@@ -439,7 +439,7 @@ class CartesianJogWidget(QWidget):
         if not self.movement_enabled:
             return
 
-        # Nur während aktivem Jog streamen; beim Loslassen genau ein Null-Twist, im Leerlauf nichts
+        # Stream only while jogging; exactly one zero twist on release, nothing while idle
         velocities = self.get_target_velocities()
         if any(v != 0.0 for v in velocities):
             self.jogging = True

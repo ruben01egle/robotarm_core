@@ -19,7 +19,7 @@ import time
 from robotarm_interface.srv import RequestAction
 from robotarm_interface.msg import SystemStatus
 
-# Werte = Konstanten von SystemStatus.msg, so wird state ohne Umrechnung publiziert
+# Values are the SystemStatus.msg constants, so the state is published without conversion
 class SystemState(Enum):
         IDLE            = SystemStatus.IDLE
         CONNECTED       = SystemStatus.CONNECTED
@@ -139,13 +139,13 @@ class ControlCenterNode(Node):
             callback_group=self.multithread_cb_group
         )
 
-        # Controller-Set der Mission, wird in einem einzigen Switch-Request (de)aktiviert,
-        # z.B. [cartesian_impedance_controller, joint_stream_controller_impedance] bei Chaining
+        # Controller set of the mission, (de)activated in a single switch request,
+        # e.g. [cartesian_impedance_controller, joint_stream_controller_impedance] when chained
         self.active_controllers = []
         self.active_node = None
 
-        # Controller-Überwachung: erkennt, wenn der controller_manager einen Mission-Controller
-        # selbstständig deaktiviert (z.B. durch einen Fehler im Controller)
+        # Controller monitoring: detects when the controller_manager deactivates a mission controller
+        # on its own (e.g. after an error in the controller)
         self.switching_controller = False
         self.controller_check_pending = False
         self.controller_monitor_timer = self.create_timer(
@@ -251,7 +251,7 @@ class ControlCenterNode(Node):
         if not self.switch_ctrl_client.wait_for_service(timeout_sec=1.0):
             raise RuntimeError("Service '/controller_manager/switch_controller' not active!")
 
-        # Alle Controller des Sets in EINEM Request (STRICT: ganz oder gar nicht)
+        # All controllers of the set in ONE request (STRICT: all or nothing)
         request = SwitchController.Request()
         request.activate_controllers = controller_names
         request.deactivate_controllers = []
@@ -287,7 +287,7 @@ class ControlCenterNode(Node):
             if not self.switch_ctrl_client.wait_for_service(timeout_sec=1.0):
                 raise RuntimeError("Service '/controller_manager/switch_controller' not active!")
 
-            # Ganzes Set in einem Request, Chaining erlaubt kein einzelnes Abschalten des Downstreams
+            # Whole set in one request: chaining does not allow deactivating the downstream controller alone
             request = SwitchController.Request()
             request.activate_controllers = []
             request.deactivate_controllers = list(self.active_controllers)
@@ -304,7 +304,7 @@ class ControlCenterNode(Node):
                 if response is None or not response.ok:
                     raise RuntimeError(f"Failed to deactivate controllers: {self.active_controllers}")
 
-                # Noch innerhalb des Flags zurücksetzen, damit der Monitor keinen Fehlalarm auslöst
+                # Reset while the flag is still set, so the monitor does not raise a false alarm
                 self.active_controllers = []
             finally:
                 self.switching_controller = False
@@ -314,7 +314,7 @@ class ControlCenterNode(Node):
         self.get_logger().info("Mission controllers successfully stopped.")
 
     def controller_monitor_cb(self):
-        """Fragt zyklisch ab, ob alle Controller der Mission noch aktiv sind."""
+        """Check periodically whether all controllers of the mission are still active."""
         if self.state != SystemState.MISSION or not self.active_controllers:
             return
         if self.switching_controller or self.controller_check_pending:
@@ -333,7 +333,7 @@ class ControlCenterNode(Node):
             if response is None:
                 return
 
-            # Zustand könnte sich während der Abfrage geändert haben (z.B. regulärer Disengage)
+            # The state may have changed during the query (e.g. a regular disengage)
             if (self.state != SystemState.MISSION or self.switching_controller
                     or self.active_controllers != expected_controllers):
                 return
@@ -358,7 +358,7 @@ class ControlCenterNode(Node):
             f"Controller {lost_text} left active state unexpectedly. "
             f"Mission of '{self.active_node}' aborted. See controller_manager log for reason.")
 
-        # Rest des Sets mit abschalten, damit immer ein definierter Zustand (ARMED, Antriebe halten) entsteht
+        # Deactivate the rest of the set too, so the result is always a defined state (ARMED, drives hold)
         if still_active:
             self.active_controllers = still_active
             self.deactivate_active_controller()
