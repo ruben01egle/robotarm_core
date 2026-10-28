@@ -225,6 +225,11 @@ class GuiDataStore:
             return list(self.active_controllers)
     
     # --- Live getters (latest frame) ---
+    def has_joint_state(self) -> bool:
+        """True once a /joint_states message has arrived."""
+        with self._lock:
+            return bool(self.frames)
+
     def get_current_positions(self) -> list:
         """Current actual positions of all axes in rad."""
         with self._lock:

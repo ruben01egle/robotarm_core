@@ -1,16 +1,29 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QScrollArea, QFrame, QSizePolicy,
-                             QHBoxLayout, QPushButton, QStackedWidget, QTextEdit)
+                             QHBoxLayout, QLabel, QMessageBox, QPushButton, QStackedWidget, QTextEdit)
 from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtGui import QTextCursor
+from PyQt6.QtGui import QKeySequence, QShortcut, QTextCursor
 
 from .telemetry_widget import TelemetryDashboard
 from .joint_jog_widget import JointJogWidget
 from .cartesian_jog_widget import CartesianJogWidget
 from .compliance_widget import ComplianceWidget
-from .motion_widget import MotionWidget
+from .program_widget import MOTION_SERVER, ProgramWidget
+from .pose_bar_widget import PoseBar
 from .stiffness_widget import StiffnessWidget
 from .controller_modes import COMPLIANT
 from .control_header_widget import ControlHeader
+
+NAV_BUTTON_STYLE = """
+    QPushButton {
+        background-color: #3d3d3d; color: white;
+    }
+    QPushButton:checked {
+        background-color: #27ae60;  /* green for the active mode */
+        border: 2px solid #2ecc71;
+    }
+    QPushButton:disabled { color: #7f8c8d; }
+    QPushButton:checked:disabled { color: #dfe6e9; }
+"""
 
 class RobotMainWindow(QMainWindow):
     def __init__(self, guiDataStore, node):
@@ -24,13 +37,14 @@ class RobotMainWindow(QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.main_layout = QVBoxLayout(self.central_widget)
 
-        # 1. TOP: header
+        # 1. TOP: header and the always visible position bar
         self.control_header = ControlHeader(self.data_store, self.node)
+        self.pose_bar = PoseBar(self.data_store)
 
         # 2. MIDDLE: content side by side
         self.content_layout = QHBoxLayout()
         
-        # LEFT: the control stack
+        # LEFT: manual control (the control stack)
         self.init_nav_bar()
         self.left_column_container = QWidget()
         self.left_column_container.setFixedWidth(400) # width of the whole column
@@ -42,8 +56,7 @@ class RobotMainWindow(QMainWindow):
         self.joint_page = JointJogWidget(self.data_store, self.node)
         self.cartesian_page = CartesianJogWidget(self.data_store, self.node)
         self.compliance_page = ComplianceWidget(self.data_store, self.node)
-        self.motion_page = MotionWidget(self.data_store, self.node)
-        self.pages = [self.joint_page, self.cartesian_page, self.compliance_page, self.motion_page]
+        self.pages = [self.joint_page, self.cartesian_page, self.compliance_page]
         
         for page in self.pages:
             self.control_stack.addWidget(page)
@@ -67,18 +80,31 @@ class RobotMainWindow(QMainWindow):
         self.left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.left_scroll.setWidget(scroll_content)
 
-        self.left_column_layout.addWidget(self.nav_container) 
+        # Shown while a program runs: manual control is locked then
+        self.program_lock_label = QLabel("Program running: manual control locked")
+        self.program_lock_label.setWordWrap(True)
+        self.program_lock_label.setStyleSheet("""
+            background-color: #3b2f0a; color: #f1c40f; font-weight: bold;
+            border: 1px solid #f1c40f; border-radius: 6px; padding: 6px;
+        """)
+        self.program_lock_label.hide()
+
+        self.left_column_layout.addWidget(self.nav_container)
+        self.left_column_layout.addWidget(self.program_lock_label)
         self.left_column_layout.addWidget(self.left_scroll)
         self.fit_stack_to_page()
-        
-        # RIGHT: the telemetry dashboard
+
+        # RIGHT: workspace, MONITOR (telemetry) or PROGRAM (MoveIt goals and programs)
         self.dashboard = TelemetryDashboard(self.data_store)
+        self.program_page = ProgramWidget(self.data_store, self.node)
+        self.init_workspace()
 
         # Assemble the middle
         self.content_layout.addWidget(self.left_column_container)
-        self.content_layout.addWidget(self.dashboard, stretch=1)
+        self.content_layout.addWidget(self.workspace_container, stretch=1)
 
         self.main_layout.addWidget(self.control_header, stretch=1)
+        self.main_layout.addWidget(self.pose_bar)
         self.main_layout.addLayout(self.content_layout, stretch=4)
 
         # 3. BOTTOM: log console
@@ -91,7 +117,39 @@ class RobotMainWindow(QMainWindow):
         self.update_timer.timeout.connect(self.global_update)
         self.update_timer.start(33)
 
+        # Space: teach in the PROGRAM tab (the widget ignores it while typing or not visible)
+        self.teach_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Space), self)
+        self.teach_shortcut.activated.connect(self.program_page.shortcut_teach)
+
         self.log_message("System initialized. Dashboard and Controls ready.")
+
+    def init_workspace(self):
+        """Right side: tab buttons MONITOR | PROGRAM above a stack with the two workspaces."""
+        self.workspace_container = QWidget()
+        layout = QVBoxLayout(self.workspace_container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        tabs = QHBoxLayout()
+        tabs.setContentsMargins(0, 0, 0, 4)
+        self.btn_monitor = QPushButton("MONITOR")
+        self.btn_program = QPushButton("PROGRAM")
+        self.workspace_buttons = [self.btn_monitor, self.btn_program]
+        for index, btn in enumerate(self.workspace_buttons):
+            btn.setCheckable(True)
+            btn.setAutoExclusive(True)
+            btn.setMinimumHeight(40)
+            btn.setStyleSheet(NAV_BUTTON_STYLE)
+            btn.clicked.connect(lambda checked, i=index: self.switch_workspace(i))
+            tabs.addWidget(btn)
+        self.btn_monitor.setChecked(True)
+        layout.addLayout(tabs)
+        self.workspace_stack = QStackedWidget()
+        self.workspace_stack.addWidget(self.dashboard)
+        self.workspace_stack.addWidget(self.program_page)
+        layout.addWidget(self.workspace_stack, stretch=1)
+
+    def switch_workspace(self, index):
+        self.workspace_stack.setCurrentIndex(index)
+        self.log_message(f"Workspace changed to: {['MONITOR', 'PROGRAM'][index]}")
 
     def init_nav_bar(self):
         """Create the bar that switches the left control page."""
@@ -103,24 +161,13 @@ class RobotMainWindow(QMainWindow):
         self.btn_joint_jog = QPushButton("JOINT")
         self.btn_cartesian_jog = QPushButton("CARTESIAN")
         self.btn_compliance = QPushButton("COMPLIANCE")
-        self.btn_moveit = QPushButton("MOVEIT")
-        self.nav_buttons = [self.btn_joint_jog, self.btn_cartesian_jog, self.btn_compliance, self.btn_moveit]
-        
+        self.nav_buttons = [self.btn_joint_jog, self.btn_cartesian_jog, self.btn_compliance]
+
         for idx, btn in enumerate(self.nav_buttons):
             btn.setCheckable(True)
             btn.setAutoExclusive(True)
             btn.setMinimumHeight(40)
-            btn.setStyleSheet("""
-                    QPushButton { 
-                        background-color: #3d3d3d; color: white; 
-                    }
-                    QPushButton:checked { 
-                        background-color: #27ae60;  /* green for the active mode */
-                        border: 2px solid #2ecc71;
-                    }
-                    QPushButton:disabled { color: #7f8c8d; }
-                    QPushButton:checked:disabled { color: #dfe6e9; }
-                """)
+            btn.setStyleSheet(NAV_BUTTON_STYLE)
             # default argument i=idx binds the index for the lambda
             btn.clicked.connect(lambda checked, i=idx: self.switch_gui_mode(i))
             self.nav_layout.addWidget(btn)
@@ -148,7 +195,7 @@ class RobotMainWindow(QMainWindow):
         self.fit_stack_to_page()
         # On the compliance page the stiffness panel is the main content
         self.stiffness_panel.set_expanded(self.control_stack.currentWidget() is self.compliance_page)
-        modes = ["JOINT", "CARTESIAN", "COMPLIANCE", "MOVEIT"]
+        modes = ["JOINT", "CARTESIAN", "COMPLIANCE"]
         self.log_message(f"Gui Mode changed to: {modes[index]}")
 
     def fit_stack_to_page(self):
@@ -171,7 +218,8 @@ class RobotMainWindow(QMainWindow):
         self.joint_page.update_widget()
         self.cartesian_page.update_widget()
         self.compliance_page.update_widget()
-        self.motion_page.update_widget()
+        self.program_page.update_widget()
+        self.pose_bar.update_widget()
         self.stiffness_panel.update_widget()
         self.update_stiffness_visibility()
         self.control_header.update_status()
@@ -179,12 +227,26 @@ class RobotMainWindow(QMainWindow):
         self.log_update()
 
     def update_nav_lock(self):
-        """The control page cannot be changed while a mission is active."""
-        mission_active = bool(self.data_store.get_status()["active_node"])
+        """
+        The control page cannot be changed while a mission is active; while a program runs
+        (mission of the motion_server) manual control is locked completely.
+        """
+        owner = self.data_store.get_status()["active_node"]
         for btn in self.nav_buttons:
-            btn.setEnabled(not mission_active)
+            btn.setEnabled(not owner)
+        program_running = owner == MOTION_SERVER
+        if program_running == self.left_scroll.isEnabled():
+            self.left_scroll.setEnabled(not program_running)
+            self.program_lock_label.setVisible(program_running)
 
     def closeEvent(self, event):
+        if self.program_page.dirty:
+            answer = QMessageBox.question(
+                self, "Unsaved program",
+                "The program in the PROGRAM tab has unsaved changes. Close anyway?")
+            if answer != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
         # Safety: send a zero twist, the Cartesian controller has no timeout (yet)
         self.cartesian_page.shutdown()
         super().closeEvent(event)
