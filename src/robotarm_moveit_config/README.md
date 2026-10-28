@@ -23,6 +23,7 @@ flowchart LR
         CM["controller_manager"]
         JTC["joint_trajectory_controller<br/>(spawned inactive)"]
         JOG["jog / stream / impedance<br/>controllers"]
+        FF["ff_controller<br/>(feedforward torque)"]
         HW["moteus hardware"]
     end
     GUI -- "RequestAction (arm, stop, missions)" --> CC
@@ -33,7 +34,9 @@ flowchart LR
     RVIZ -- "plan" --> MG
     MG -- "FollowJointTrajectory" --> JTC
     GUI -- "jog commands" --> JOG
-    CM --- JTC & JOG --> HW
+    CM --- JTC & JOG & FF
+    JTC -- "chained" --> FF
+    FF & JOG --> HW
 ```
 
 | Component | Runs on | Responsibility |
@@ -44,7 +47,9 @@ flowchart LR
 | `motion_server` (`robotarm_motion`) | high-level PC | goals and programs, runs MoveIt jobs inside its own mission |
 
 `joint_trajectory_controller` is inactive until a mission activates it, so a MoveIt execution
-outside a mission is rejected and nothing moves.
+outside a mission is rejected and nothing moves. Like `joint_stream_controller` and
+`cartesian_jog_controller`, it is chained onto `ff_controller`, which adds feedforward torque;
+control_center activates and deactivates `ff_controller` in the same request as these three.
 
 ## Files
 
@@ -63,7 +68,6 @@ outside a mission is rejected and nothing moves.
 | `launch/demo.launch.py` | standalone demo with mock hardware (`rviz:=`) |
 | `launch/move_group.launch.py` | move_group (+ RViz) against the real ros2_control stack (`rviz:=`, `tool:=`, `use_sim_time:=`, `allow_trajectory_execution:=`) |
 | `launch/setup_assistant.launch.py` | Setup Assistant on the *installed* copy |
-| `doc/firmware_joint_trajectory_controller.md` | patch adding `joint_trajectory_controller` to the firmware |
 
 **SRDF details**
 - Group `arm`: chain `base → tcp`, joints `axis1..axis6`. The `tool` xacro argument decides where
@@ -89,9 +93,13 @@ outside a mission is rejected and nothing moves.
 - **Conservative limits.** The URDF has motor limits, not tested motion limits, and no acceleration
   limits. The limits here are low and the default scaling is 10 %; raise them step by step.
 - **`moveit_simple_controller_manager`, never switching controllers.** Controller switching belongs
-  to `control_center` (armed check, one mission at a time, deactivation on STOP/ERROR). MoveIt only
-  knows the action name of `joint_trajectory_controller`; `moveit_manage_controllers=False` makes
-  this explicit.
+  to `control_center` (armed check, one mission at a time, deactivation on STOP/ERROR, adding
+  `ff_controller` below the position controllers). MoveIt only knows the action name of
+  `joint_trajectory_controller`; `moveit_manage_controllers=False` makes this explicit.
+- **Trajectories with accelerations.** `joint_trajectory_controller` passes accelerations on to
+  `ff_controller` as feedforward torque; without them the torque jumps at every point. OMPL gets
+  them from the time parameterization (`AddTimeOptimalParameterization`), Pilz computes them;
+  `robotarm_motion` refuses to execute a trajectory without them.
 
 ## Quickstart
 
@@ -119,17 +127,16 @@ selected in the **Context** tab (`pilz_industrial_motion_planner`, `PTP` or `LIN
 **Never run two RT sides at once** (mock, sim, real robot or `demo.launch.py`) in the same
 `ROS_DOMAIN_ID`: each provides `/controller_manager` and `/joint_states`.
 
-Once: the firmware needs `joint_trajectory_controller`. Until it is merged upstream, use branch
-`feature/joint-trajectory-controller` of the fork, or apply the patch in
-[`doc/`](doc/firmware_joint_trajectory_controller.md):
+Once: build the firmware (main branch; it has `joint_trajectory_controller` and `ff_controller`):
 
 ```bash
 cd <robotarm_firmware_lnx>
-git remote add fork https://github.com/saw2812/robotarm_firmware_lnx.git
-git fetch fork && git checkout -b feature/joint-trajectory-controller fork/feature/joint-trajectory-controller
 git -c url."https://github.com/".insteadOf="git@github.com:" submodule update --init
 source /opt/ros/jazzy/setup.bash && rosdep install --from-paths src --ignore-src -y -r && colcon build
 ```
+
+The standalone `demo.launch.py` has no `ff_controller`: position missions through control_center
+(jogging, PROGRAM jobs) only work against the firmware's mock, sim or hardware.
 
 Goals file for the motion_server, once (see `robotarm_motion`):
 
@@ -266,9 +273,9 @@ References: `kdl_kinematics_plugin` (moveit_kinematics) and pick_ik.
 1. **First run on the real robot**: mock and sim first, then hardware at 10 % with the e-stop in hand.
    Check that the firmware's trajectory tolerances (`controllers.yaml`, PRELIMINARY: 0.1 rad while
    moving, 0.01 rad at the goal) trigger, e.g. by gently blocking a joint at low speed.
-2. **Firmware branch upstream**: `joint_trajectory_controller` (spawned inactive in the shared
-   `controllers.launch.py`) is only on the fork / in the patch in `doc/`, not yet in
-   `robotarm_firmware_lnx`.
+2. **ff_controller not tested here**: the switching (one request with `ff_controller`) is unit
+   tested; check on the firmware mock/sim that every mode engages and disengages without the arm
+   sagging, and that `list_controllers` always shows one of the valid combinations.
 3. **No access control during a mission**: while a mission keeps a controller active, any node
    sending trajectories or jog commands moves the arm. Closing that needs SROS2.
 4. **control_center is not enforced**: `ros2 control switch_controllers` bypasses it; it only

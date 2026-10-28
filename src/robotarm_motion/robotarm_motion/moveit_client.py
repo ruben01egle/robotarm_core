@@ -336,8 +336,14 @@ class MoveItClient:
         Execute a planned JointTrajectory through move_group; MotionError unless it succeeded.
 
         move_group checks the start against the current state (allowed_start_tolerance) and
-        monitors the duration (moveit_controllers.yaml, trajectory_execution).
+        monitors the duration (moveit_controllers.yaml, trajectory_execution). Every point needs
+        accelerations: the joint_trajectory_controller feeds them to ff_controller as feedforward
+        torque, without them the torque would jump at every point.
         """
+        joints = len(trajectory.joint_names)
+        if any(len(p.accelerations) != joints for p in trajectory.points):
+            raise MotionError('trajectory without accelerations: the feedforward torque of '
+                              'ff_controller would jump at every point')
         goal = ExecuteTrajectory.Goal()
         goal.trajectory = RobotTrajectory(joint_trajectory=trajectory)
         code = self._send(self._execute_client, goal).error_code.val

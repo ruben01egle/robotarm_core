@@ -160,7 +160,10 @@ ros2 action send_goal --feedback /motion_server/run robotarm_interface/action/Ru
 
 `joint_trajectory_controller` is spawned inactive; only control_center switches controllers (armed
 check, one mission at a time, deactivation on STOP/ERROR). A job asks for a mission with
-`controller_names=["joint_trajectory_controller"]`, executes, and ends it. Once `/system_status`
+`controller_names=["joint_trajectory_controller"]`, executes, and ends it; control_center
+activates and deactivates `ff_controller` (feedforward, chained below) in the same request.
+Trajectories must carry accelerations (they become feedforward torque); `MoveItClient` refuses to
+execute one without them. Once `/system_status`
 has reported MISSION, any other state counts as aborted; after a failed motion the server waits up
 to 1 s for the status, so it reports the real cause (STOP, controller lost).
 

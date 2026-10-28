@@ -19,6 +19,9 @@ import time
 from robotarm_interface.srv import RequestAction
 from robotarm_interface.msg import SystemStatus
 
+from .switching import (FEEDFORWARD_CONTROLLER, FEEDFORWARD_UPSTREAMS, switch_request,
+                        with_feedforward)
+
 # Values are the SystemStatus.msg constants, so the state is published without conversion
 class SystemState(Enum):
         IDLE            = SystemStatus.IDLE
@@ -44,6 +47,13 @@ class ControlCenterNode(Node):
         # self.hold_controller_name = self.get_parameter('hold_position_controller_name').get_parameter_value().string_value
 
         self.get_logger().info(f"Loaded Hardware Component Name: '{self.hardware_name}'")
+
+        # The position-controlled controllers are chained onto the feedforward controller;
+        # control_center switches it together with them (see switching.py)
+        self.declare_parameter('feedforward_controller', FEEDFORWARD_CONTROLLER)
+        self.declare_parameter('feedforward_upstreams', list(FEEDFORWARD_UPSTREAMS))
+        self.ff_controller = self.get_parameter('feedforward_controller').value
+        self.ff_upstreams = tuple(self.get_parameter('feedforward_upstreams').value)
         # self.get_logger().info(f"Loaded Hold-Position Controller: '{self.hold_controller_name}'")
 
         states = [
@@ -241,20 +251,25 @@ class ControlCenterNode(Node):
 
     def on_enter_mission_before(self, event_data):
         node_name = event_data.kwargs.get('node_name', 'unknown_node')
-        controller_names = list(event_data.kwargs.get('controller_names', []))
+        requested = list(event_data.kwargs.get('controller_names', []))
 
-        if not controller_names:
+        if not requested:
             raise RuntimeError(f"Rejected: node '{node_name}' requested a mission without controllers.")
+
+        # Position-controlled controllers only run together with the feedforward controller
+        controller_names = with_feedforward(requested, self.ff_controller, self.ff_upstreams)
+        if self.ff_controller in controller_names and self.ff_controller not in requested:
+            self.check_loaded(self.ff_controller, needed_for=requested)
 
         self.get_logger().info(f"Preparing mission for node '{node_name}'. Activating controllers {controller_names}...")
 
         if not self.switch_ctrl_client.wait_for_service(timeout_sec=1.0):
             raise RuntimeError("Service '/controller_manager/switch_controller' not active!")
 
-        # All controllers of the set in ONE request (STRICT: all or nothing)
+        # All controllers of the set in ONE request (STRICT: all or nothing), downstream first
         request = SwitchController.Request()
-        request.activate_controllers = controller_names
-        request.deactivate_controllers = []
+        request.activate_controllers, request.deactivate_controllers = \
+            switch_request(self.active_controllers, controller_names)
         request.strictness = SwitchReq.STRICT
         request.activate_asap = True
 
@@ -289,8 +304,8 @@ class ControlCenterNode(Node):
 
             # Whole set in one request: chaining does not allow deactivating the downstream controller alone
             request = SwitchController.Request()
-            request.activate_controllers = []
-            request.deactivate_controllers = list(self.active_controllers)
+            request.activate_controllers, request.deactivate_controllers = \
+                switch_request(self.active_controllers, [])
             request.strictness = SwitchReq.STRICT
 
             self.switching_controller = True
@@ -312,6 +327,19 @@ class ControlCenterNode(Node):
         self.active_node = None
         self.active_controllers = []
         self.get_logger().info("Mission controllers successfully stopped.")
+
+    def check_loaded(self, controller, needed_for):
+        """Raise RuntimeError unless controller is loaded in the controller_manager."""
+        if not self.list_ctrl_client.wait_for_service(timeout_sec=1.0):
+            raise RuntimeError("Service '/controller_manager/list_controllers' not active!")
+        rate = self.create_rate(20)
+        future = self.list_ctrl_client.call_async(ListControllers.Request())
+        while not future.done():
+            rate.sleep()
+        response = future.result()
+        if response is None or controller not in [c.name for c in response.controller]:
+            raise RuntimeError(f"Rejected: {controller} is not loaded on the controller_manager "
+                               f"(needed for {', '.join(needed_for)}).")
 
     def controller_monitor_cb(self):
         """Check periodically whether all controllers of the mission are still active."""
@@ -462,9 +490,9 @@ class ControlCenterNode(Node):
             return
 
         request = SwitchController.Request()
-        request.activate_controllers = []
-        request.deactivate_controllers = list(self.active_controllers)
-        request.strictness = SwitchReq.BEST_EFFORT 
+        request.activate_controllers, request.deactivate_controllers = \
+            switch_request(self.active_controllers, [])
+        request.strictness = SwitchReq.BEST_EFFORT
 
         try:
             if blocking:
