@@ -380,6 +380,8 @@ class MotionServer(Node):
                 try:
                     self.moveit.execute_trajectory(seg.trajectory)
                 except MotionError as e:
+                    if goal_handle.is_cancel_requested:
+                        raise JobError('cancelled by the client', ranges[i - 1])
                     self.mission.check_after_failure()   # report a STOP rather than the error
                     raise JobError(str(e), ranges[i - 1])
             self.mission.check()
