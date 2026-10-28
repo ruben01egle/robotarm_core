@@ -12,7 +12,7 @@ moves: if one step cannot be planned, nothing moves.
 Goals are turned into MoveIt goal constraints per motion type:
 
 - joint goal: joint constraints (PTP, OMPL and LIN; Pilz computes the LIN pose itself)
-- Cartesian goal, or a goal with offset_xyz:
+- Cartesian goal, or a goal with offset_xyz (base frame, or tool frame with offset_frame: tcp):
   - LIN: tcp pose constraint (straight line from the previous pose)
   - PTP / OMPL: joint goal from IK, seeded with the goal's seed (the arm configuration when it was
     taught) or the start of the segment. Without that, the IK solver may pick another configuration
@@ -29,7 +29,7 @@ from moveit_msgs.msg import (
     RobotTrajectory)
 from moveit_msgs.srv import GetPositionIK
 from rclpy.action import ActionClient
-from robotarm_motion.goals import CartesianGoal, GoalFileError, JOINTS
+from robotarm_motion.goals import CartesianGoal, GoalFileError, JOINTS, PILZ_MOTIONS, rotate
 from robotarm_motion.moveit_client import (
     BASE_FRAME, duration_s, ERROR_NAMES, GROUP, MotionError, OMPL, PILZ, TCP_LINK, wait_for)
 from trajectory_msgs.msg import JointTrajectory
@@ -88,8 +88,13 @@ class Planner:
 
     # ----- goal resolution -------------------------------------------------------------------
 
-    def target_pose(self, goal, offset):
-        """Return the tcp pose of a goal (FK for joint goals) plus offset_xyz [m], base frame."""
+    def target_pose(self, goal, offset, offset_frame='base'):
+        """
+        Return the tcp pose of a goal (FK for joint goals) plus offset_xyz [m], base frame.
+
+        offset_frame 'tcp': the offset is given in the tool frame of the goal (rotated by its
+        orientation), e.g. (0, 0, -0.05) = 5 cm back along the tool's z axis.
+        """
         if isinstance(goal, CartesianGoal):
             xyz, quat = goal.xyz, goal.quat
         else:
@@ -97,6 +102,8 @@ class Planner:
             xyz = (p.position.x, p.position.y, p.position.z)
             quat = (p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w)
         offset = offset or (0.0, 0.0, 0.0)
+        if offset_frame == 'tcp':
+            offset = rotate(quat, offset)
         pose = Pose()
         pose.position.x, pose.position.y, pose.position.z = (a + b for a, b in zip(xyz, offset))
         pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = quat
@@ -131,7 +138,7 @@ class Planner:
         what = f'step to {step.goal!r}'
         if not isinstance(goal, CartesianGoal) and step.offset_xyz is None:
             return self.moveit.joint_goal(goal.joints)
-        pose = self.target_pose(goal, step.offset_xyz)
+        pose = self.target_pose(goal, step.offset_xyz, step.offset_frame)
         if step.motion == 'LIN':
             return self.moveit.pose_goal(pose)
         if isinstance(goal, CartesianGoal):
@@ -196,13 +203,14 @@ class Planner:
         is repeated; nothing moves before the whole job has been planned.
         """
         planned, start = [], dict(start_joints)
-        for segment in segments:
+        for index, segment in enumerate(segments):
             for attempt in range(1, attempts + 1):
                 try:
                     planned.append(self.plan_segment(goal_file, segment, scaling, start))
                     break
                 except MotionError as e:
                     if attempt == attempts:
+                        e.segment = index   # for the caller: which steps failed
                         raise
                     self.node.get_logger().warn(f'planning failed ({e}), planning again')
             start = planned[-1].end_joints()
@@ -217,6 +225,50 @@ class Planner:
             robot_traj.joint_trajectory = seg.trajectory
             msg.trajectory.append(robot_traj)
         self._display_pub.publish(msg)
+
+
+def check_blends(planner, goal_file, steps):
+    """
+    Blend radii Pilz would refuse, before planning: [(step number, message), ...].
+
+    Within a run of Pilz steps, as Pilz checks them: a blend radius must be smaller than the
+    distance to the previous and to the next goal, and two neighbouring blend spheres must not
+    overlap. tcp positions come from target_pose (FK for joint goals); the start of the first step
+    is the current pose, which is unknown here, so that distance is not checked.
+    """
+    problems = []
+    positions = [None] * len(steps)
+
+    def position(i):
+        if positions[i] is None:
+            s = steps[i]
+            p = planner.target_pose(goal_file.goal(s.goal), s.offset_xyz, s.offset_frame).position
+            positions[i] = (p.x, p.y, p.z)
+        return positions[i]
+
+    def dist(i, j):
+        return math.dist(position(i), position(j))
+
+    for i, step in enumerate(steps):
+        last = i == len(steps) - 1
+        if not step.blend or last or step.motion not in PILZ_MOTIONS \
+                or steps[i + 1].motion not in PILZ_MOTIONS:
+            continue   # no blending here (segments() sets these radii to 0 and reports them)
+        r, n = step.blend, i + 1
+        if r >= dist(i, i + 1):
+            problems.append((n, f'step {n}: blend {r * 1000:.0f} mm is not smaller than the '
+                                f'distance to the next goal ({dist(i, i + 1) * 1000:.0f} mm)'))
+        elif i > 0 and r >= dist(i - 1, i):
+            d = dist(i - 1, i) * 1000
+            problems.append((n, f'step {n}: blend {r * 1000:.0f} mm is not smaller than the '
+                                f'distance from the previous goal ({d:.0f} mm)'))
+        blends_next = i + 2 < len(steps) and steps[i + 2].motion in PILZ_MOTIONS
+        nxt = steps[i + 1].blend if blends_next else 0.0
+        if nxt and r + nxt >= dist(i, i + 1):
+            d = dist(i, i + 1) * 1000
+            problems.append((n, f'steps {n} and {n + 1}: blend radii {r * 1000:.0f} + '
+                                f'{nxt * 1000:.0f} mm overlap (goals {d:.0f} mm apart)'))
+    return problems
 
 
 def check_goal_file_steps(goal_file, steps):

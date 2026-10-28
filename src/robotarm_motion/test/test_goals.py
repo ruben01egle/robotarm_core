@@ -5,8 +5,8 @@ import math
 import pytest
 
 from robotarm_motion.goals import (
-    CartesianGoal, GoalFile, GoalFileError, JointGoal, JOINTS, parse_goal, parse_step,
-    quat_from_rpy, rpy_from_quat, segments, Step)
+    CartesianGoal, check_goal, GoalFile, GoalFileError, JointGoal, JOINTS, parse_goal,
+    parse_step, quat_from_rpy, rotate, rpy_from_quat, segments, Step)
 
 READY = dict(zip(JOINTS, [0.0, -1.3, 1.5, 0.0, 1.0, 0.0]))
 
@@ -150,3 +150,71 @@ def test_segments():
     assert [x.blend for x in segs[2].steps] == [0.0, 0.01, 0.0]
     assert len(notes) == 3                     # b (before OMPL), c (OMPL), f (end)
     assert steps[1].blend == 0.02              # the program itself is not modified
+
+
+def test_offset_frame(tmp_path):
+    step = parse_step({'goal': 'a', 'motion': 'LIN', 'offset_xyz': [0, 0, -0.05],
+                       'offset_frame': 'tcp'}, 'x')
+    assert step.offset_frame == 'tcp'
+    assert step.to_yaml()['offset_frame'] == 'tcp'
+    assert 'offset_frame' not in parse_step({'goal': 'a', 'offset_xyz': [0, 0, 1]}, 'x').to_yaml()
+    with pytest.raises(GoalFileError):
+        parse_step({'goal': 'a', 'offset_xyz': [0, 0, 1], 'offset_frame': 'world'}, 'x')
+
+
+def test_rotate():
+    # tool pointing down (rpy 180, 0, 0): tool z is base -z
+    q = quat_from_rpy(math.pi, 0.0, 0.0)
+    assert all(math.isclose(a, b, abs_tol=1e-12) for a, b in zip(rotate(q, (0, 0, 1)), (0, 0, -1)))
+    # 90 deg about z: x -> y
+    q = quat_from_rpy(0.0, 0.0, math.pi / 2)
+    assert all(math.isclose(a, b, abs_tol=1e-12) for a, b in zip(rotate(q, (1, 0, 0)), (0, 1, 0)))
+
+
+def test_set_and_remove_program(tmp_path):
+    path = write(tmp_path, 'goals: {a: {joints_deg: [0, 0, 0, 0, 0, 0]}}\n')
+    f = GoalFile(path, {'home': READY})
+    f.set_program('demo', [Step('home'), Step('a', 'LIN', 0.01)])
+    f.save()
+    again = GoalFile(path, {'home': READY})
+    assert [s.goal for s in again.programs['demo']] == ['home', 'a']
+    assert again.users('a') == ['demo']
+    again.remove_program('demo')
+    assert again.programs == {}
+    with pytest.raises(GoalFileError):
+        again.remove_program('demo')
+
+
+def test_check_steps_reports_the_step(tmp_path):
+    f = GoalFile(write(tmp_path, 'goals: {a: {joints_deg: [0, 0, 0, 0, 0, 0]}}\n'))
+    with pytest.raises(GoalFileError) as e:
+        f.set_program('p', [Step('a'), Step('missing')])
+    assert e.value.step == 2
+    with pytest.raises(GoalFileError) as e:
+        f.set_program('p', [Step('a'), Step('a', 'PTP', -1.0)])
+    assert e.value.step == 2
+    with pytest.raises(GoalFileError):
+        f.set_program('p', [])
+    with pytest.raises(GoalFileError):
+        f.set_program('bad name', [Step('a')])
+
+
+def test_next_free_name(tmp_path):
+    f = GoalFile(write(tmp_path, 'goals: {p1: {joints_deg: [0, 0, 0, 0, 0, 0]}, '
+                                 'p3: {joints_deg: [0, 0, 0, 0, 0, 0]}}\n'))
+    assert f.next_free_name() == 'p2'
+    assert f.next_free_name('demo_p') == 'demo_p1'
+    with pytest.raises(GoalFileError):
+        f.next_free_name('1x')
+
+
+def test_check_goal():
+    check_goal(JointGoal('ok', dict(READY)))
+    goal = check_goal(CartesianGoal('c', (0.1, 0.2, 0.3), (0, 0, 0, 2.0)))
+    assert math.isclose(goal.quat[3], 1.0)
+    for bad in [JointGoal('1x', dict(READY)),
+                JointGoal('j', {'axis1': 0.0}),
+                JointGoal('n', dict(READY, axis1=float('nan'))),
+                CartesianGoal('s', (0, 0, 0), (0, 0, 0, 1), seed={'axis1': 0.0})]:
+        with pytest.raises(GoalFileError):
+            check_goal(bad)

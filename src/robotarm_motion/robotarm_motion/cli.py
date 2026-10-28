@@ -2,10 +2,14 @@
 Command line for goals, programs and motions: ros2 run robotarm_motion motion <command>.
 
   list                           goals (incl. SRDF named states) and programs of the goals file
-  teach NAME [--cartesian] [--force]
+  teach [NAME] [--cartesian] [--force] [--prefix P]
                                  save the current robot pose as goal NAME (joint goal, or tcp pose
-                                 with the current joints as IK seed)
+                                 with the current joints as IK seed); without NAME the next free
+                                 name <P><N> (default p1, p2, ...)
   remove NAME                    delete goal NAME from the goals file
+  program list | show NAME | remove NAME [--with-goals]
+                                 programs of the goals file; --with-goals also deletes the
+                                 program's unused auto-named goals (NAME_p<N>)
   run PROGRAM [--plan-only] [--scaling S]
   move GOAL [--motion PTP|LIN|OMPL] [--plan-only] [--scaling S]
                                  plan (and execute)
@@ -24,7 +28,7 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
 from robotarm_interface.action import RunMotion
-from robotarm_interface.srv import GetGoals, RemoveGoal, TeachGoal
+from robotarm_interface.srv import GetGoals, RemoveGoal, RemoveProgram, TeachGoal
 from robotarm_motion.goal_msgs import goal_from_msg, steps_from_msg
 from robotarm_motion.goals import GoalFileError, JointGoal, JOINTS, MOTIONS, rpy_from_quat
 from robotarm_motion.moveit_client import MotionError, spin_in_background, wait_for
@@ -74,6 +78,16 @@ def print_goal(goal, indent='  '):
               f'm  rpy {deg(rpy_from_quat(*goal.quat))} deg{seed}')
 
 
+def print_program(program):
+    print(f'  {program.name}:')
+    for i, s in enumerate(steps_from_msg(program.steps), 1):
+        offset = (f'  offset {[round(v * 1000, 1) for v in s.offset_xyz]} mm ({s.offset_frame})'
+                  if s.offset_xyz else '')
+        extra = ''.join([f'  blend {s.blend * 1000:.0f} mm' if s.blend else '',
+                         f'  scaling {s.scaling}' if s.scaling else '', offset])
+        print(f'    {i:2d}  {s.motion:4s} -> {s.goal}{extra}')
+
+
 def cmd_list(args):
     res = call(GetGoals, 'get_goals', GetGoals.Request())
     print(f'goals file: {res.goals_file}')
@@ -82,19 +96,35 @@ def cmd_list(args):
         print_goal(goal_from_msg(msg))
     print('\nprograms:')
     for program in res.programs:
-        print(f'  {program.name}:')
-        for s in steps_from_msg(program):
-            extra = ''.join([f'  blend {s.blend} m' if s.blend else '',
-                             f'  scaling {s.scaling}' if s.scaling else '',
-                             f'  offset {list(s.offset_xyz)} m' if s.offset_xyz else ''])
-            print(f'    {s.motion:4s} -> {s.goal}{extra}')
+        print_program(program)
     if not res.programs:
         print('  (none)')
     return 0
 
 
+def cmd_program(args):
+    if args.action == 'remove':
+        req = RemoveProgram.Request(name=args.name, remove_unused_goals=args.with_goals)
+        print(call(RemoveProgram, 'remove_program', req).message)
+        return 0
+    programs = call(GetGoals, 'get_goals', GetGoals.Request()).programs
+    if args.action == 'list':
+        for program in programs:
+            print(f'  {program.name:20s} {len(program.steps)} steps')
+        if not programs:
+            print('  (none)')
+        return 0
+    match = [p for p in programs if p.name == args.name]
+    if not match:
+        print(f'error: unknown program {args.name!r}')
+        return 1
+    print_program(match[0])
+    return 0
+
+
 def cmd_teach(args):
-    req = TeachGoal.Request(name=args.name, cartesian=args.cartesian, overwrite=args.force)
+    req = TeachGoal.Request(name=args.name or '', prefix=args.prefix, cartesian=args.cartesian,
+                            overwrite=args.force)
     res = call(TeachGoal, 'teach_goal', req)
     print(res.message)
     print_goal(goal_from_msg(res.goal))
@@ -142,7 +172,12 @@ def cmd_motion(args):
             response = wait_for(handle.get_result_async(), 30.0)
         result = response.result
         ok = response.status == GoalStatus.STATUS_SUCCEEDED and result.success
-        print(('OK: ' if ok else 'FAILED: ') + result.message)
+        steps = ''
+        if not ok and result.failed_step_from:
+            steps = (f' (step {result.failed_step_from})'
+                     if result.failed_step_from == result.failed_step_to
+                     else f' (steps {result.failed_step_from}-{result.failed_step_to})')
+        print(('OK: ' if ok else 'FAILED: ') + result.message + steps)
         return 0 if ok else 1
 
     return with_node(run)
@@ -155,12 +190,18 @@ def main():
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('list')
     p = sub.add_parser('teach')
-    p.add_argument('name')
+    p.add_argument('name', nargs='?', help='goal name (default: the next free <prefix><N>)')
+    p.add_argument('--prefix', default='', help='prefix of the generated name (default p)')
     p.add_argument('--cartesian', action='store_true',
                    help='save the tcp pose (with the current joints as IK seed)')
     p.add_argument('--force', action='store_true', help='replace an existing goal')
     p = sub.add_parser('remove')
     p.add_argument('name')
+    p = sub.add_parser('program')
+    p.add_argument('action', choices=['list', 'show', 'remove'])
+    p.add_argument('name', nargs='?')
+    p.add_argument('--with-goals', action='store_true',
+                   help='remove: also delete the unused auto-named goals of the program')
     for name, target in (('run', 'program'), ('move', 'goal')):
         p = sub.add_parser(name)
         p.add_argument(target)
@@ -170,7 +211,9 @@ def main():
         p.add_argument('--scaling', type=float, default=0.0,
                        help='velocity/acceleration scaling (0..1], default: the server default')
     args, _ = parser.parse_known_args()
-    commands = {'list': cmd_list, 'teach': cmd_teach, 'remove': cmd_remove,
+    if args.command == 'program' and args.action != 'list' and not args.name:
+        parser.error(f'program {args.action} needs a program name')
+    commands = {'list': cmd_list, 'teach': cmd_teach, 'remove': cmd_remove, 'program': cmd_program,
                 'run': cmd_motion, 'move': cmd_motion}
     try:
         return commands[args.command](args)

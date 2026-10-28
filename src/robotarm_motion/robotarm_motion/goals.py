@@ -14,16 +14,20 @@ ROS free, so the file format can be tested without a robot. Format::
       demo:
         - ready                        # short form: goal name, PTP
         - {goal: place, motion: LIN, blend: 0.02, scaling: 0.3, offset_xyz: [0, 0, 0.05]}
+        - {goal: place, motion: LIN, offset_xyz: [0, 0, -0.05], offset_frame: tcp}
         - {goal: above_part, motion: OMPL}
 
 Joint goals can also be given in radians (``joints: [...]``), Cartesian orientations as quaternion
-(``quat: [x, y, z, w]``). The named states of the SRDF (home, ready) are available as joint goals
-without being in the file; a goal in the file with the same name overrides them.
+(``quat: [x, y, z, w]``). ``offset_frame: tcp`` gives offset_xyz in the tool frame of the goal
+(e.g. -5 cm along the tool's z axis = retreat), the default ``base`` in the base frame. The named
+states of the SRDF (home, ready) are available as joint goals without being in the file; a goal in
+the file with the same name overrides them.
 """
 
 from dataclasses import dataclass, field, replace
 import math
 import os
+import re
 
 import yaml
 
@@ -31,6 +35,8 @@ JOINTS = ['axis1', 'axis2', 'axis3', 'axis4', 'axis5', 'axis6']
 FRAME = 'base'
 MOTIONS = ('PTP', 'LIN', 'OMPL')
 PILZ_MOTIONS = ('PTP', 'LIN')
+OFFSET_FRAMES = ('base', 'tcp')
+NAME = re.compile(r'^[A-Za-z][A-Za-z0-9_]*$')   # goal and program names
 
 HEADER = """\
 # robotarm goals file, see robotarm_motion/README.md ("Goals file").
@@ -39,7 +45,11 @@ HEADER = """\
 
 
 class GoalFileError(ValueError):
-    """The goals file or a request against it is invalid."""
+    """The goals file or a request against it is invalid; step is the 1-based step (0 = none)."""
+
+    def __init__(self, message, step=0):
+        super().__init__(message)
+        self.step = step
 
 
 # ----- rotations ---------------------------------------------------------------------------------
@@ -61,6 +71,18 @@ def rpy_from_quat(x, y, z, w):
     pitch = math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x))))
     yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
     return roll, pitch, yaw
+
+
+def rotate(q, v):
+    """Vector v rotated by the unit quaternion q (x, y, z, w)."""
+    x, y, z, w = q
+    # v + 2 * r x (r x v + w v), r = (x, y, z)
+    cx = y * v[2] - z * v[1] + w * v[0]
+    cy = z * v[0] - x * v[2] + w * v[1]
+    cz = x * v[1] - y * v[0] + w * v[2]
+    return (v[0] + 2 * (y * cz - z * cy),
+            v[1] + 2 * (z * cx - x * cz),
+            v[2] + 2 * (x * cy - y * cx))
 
 
 def normalized(q):
@@ -110,7 +132,8 @@ class Step:
     motion: str = 'PTP'
     blend: float = 0.0
     scaling: float = None          # None: the job's scaling
-    offset_xyz: tuple = None       # [m] in FRAME, added to the goal's tcp position
+    offset_xyz: tuple = None       # [m] added to the goal's tcp position
+    offset_frame: str = 'base'     # frame of offset_xyz: 'base' (FRAME) or 'tcp' (tool frame)
 
     def to_yaml(self):
         if (self.motion, self.blend, self.scaling, self.offset_xyz) == ('PTP', 0.0, None, None):
@@ -122,6 +145,8 @@ class Step:
             entry['scaling'] = self.scaling
         if self.offset_xyz is not None:
             entry['offset_xyz'] = list(self.offset_xyz)
+            if self.offset_frame != 'base':
+                entry['offset_frame'] = self.offset_frame
         return entry
 
 
@@ -194,26 +219,63 @@ def parse_goal(name, entry):
 def parse_step(entry, what):
     """Program step from its YAML entry (goal name or mapping)."""
     if isinstance(entry, str):
-        return Step(entry)
+        return check_step(Step(entry), what)
     if not isinstance(entry, dict) or 'goal' not in entry:
         raise GoalFileError(
             f'{what}: expected a goal name or a mapping with "goal", got {entry!r}')
-    allowed = {'goal', 'motion', 'blend', 'scaling', 'offset_xyz'}
+    allowed = {'goal', 'motion', 'blend', 'scaling', 'offset_xyz', 'offset_frame'}
     if set(entry) - allowed:
         raise GoalFileError(f'{what}: unknown keys {sorted(set(entry) - allowed)}')
-    motion = str(entry.get('motion', 'PTP')).upper()
-    if motion not in MOTIONS:
-        raise GoalFileError(f'{what}: motion must be one of {MOTIONS}, got {motion!r}')
-    blend = float(entry.get('blend', 0.0))
-    if blend < 0:
-        raise GoalFileError(f'{what}: blend must be >= 0')
-    scaling = entry.get('scaling')
-    if scaling is not None and not 0 < float(scaling) <= 1:
-        raise GoalFileError(f'{what}: scaling must be in (0, 1]')
+    try:
+        blend = float(entry.get('blend', 0.0))
+        scaling = entry.get('scaling')
+        scaling = None if scaling is None else float(scaling)
+    except (TypeError, ValueError):
+        raise GoalFileError(f'{what}: blend and scaling must be numbers')
     offset = entry.get('offset_xyz')
-    return Step(str(entry['goal']), motion, blend,
-                None if scaling is None else float(scaling),
-                None if offset is None else _vector(offset, 3, f'{what} offset_xyz'))
+    step = Step(str(entry['goal']), str(entry.get('motion', 'PTP')).upper(), blend, scaling,
+                None if offset is None else _vector(offset, 3, f'{what} offset_xyz'),
+                str(entry.get('offset_frame', 'base')))
+    return check_step(step, what)
+
+
+def check_step(step, what):
+    """Return step if its values are valid, GoalFileError otherwise."""
+    if not step.goal:
+        raise GoalFileError(f'{what}: no goal')
+    if step.motion not in MOTIONS:
+        raise GoalFileError(f'{what}: motion must be one of {MOTIONS}, got {step.motion!r}')
+    if not math.isfinite(step.blend) or step.blend < 0:
+        raise GoalFileError(f'{what}: blend must be >= 0')
+    if step.scaling is not None and not 0 < step.scaling <= 1:
+        raise GoalFileError(f'{what}: scaling must be in (0, 1]')
+    if step.offset_xyz is not None and (
+            len(step.offset_xyz) != 3 or not all(math.isfinite(v) for v in step.offset_xyz)):
+        raise GoalFileError(f'{what}: offset_xyz needs 3 numbers')
+    if step.offset_frame not in OFFSET_FRAMES:
+        raise GoalFileError(f'{what}: offset_frame must be one of {OFFSET_FRAMES}')
+    return step
+
+
+def check_goal(goal):
+    """Return goal if its name and values are valid, GoalFileError otherwise."""
+    what = f'goal {goal.name!r}'
+    if not NAME.match(goal.name):
+        raise GoalFileError(f'{what}: letters, digits and _ only, starting with a letter')
+    values = list(goal.joints.values()) if isinstance(goal, JointGoal) else \
+        list(goal.xyz) + list(goal.quat) + list((goal.seed or {}).values())
+    if not all(math.isfinite(v) for v in values):
+        raise GoalFileError(f'{what}: values must be finite numbers')
+    if isinstance(goal, JointGoal):
+        if set(goal.joints) != set(JOINTS):
+            raise GoalFileError(f'{what}: needs exactly the joints {JOINTS}')
+    else:
+        if len(goal.xyz) != 3 or len(goal.quat) != 4:
+            raise GoalFileError(f'{what}: needs xyz (3) and a quaternion (4)')
+        goal.quat = normalized(goal.quat)
+        if goal.seed is not None and set(goal.seed) != set(JOINTS):
+            raise GoalFileError(f'{what}: the seed needs exactly the joints {JOINTS}')
+    return goal
 
 
 # ----- file --------------------------------------------------------------------------------------
@@ -248,10 +310,7 @@ class GoalFile:
             self.programs[str(name)] = [parse_step(s, f'program {name!r} step {i + 1}')
                                         for i, s in enumerate(steps)]
         for name, steps in self.programs.items():
-            for i, step in enumerate(steps):
-                if step.goal not in self.goals:
-                    raise GoalFileError(f'program {name!r} step {i + 1}: unknown goal '
-                                        f'{step.goal!r}')
+            self.check_steps(steps, f'program {name!r} ')
 
     def goal(self, name):
         if name not in self.goals:
@@ -267,10 +326,48 @@ class GoalFile:
     def set_goal(self, goal):
         self.goals[goal.name] = goal
 
+    def next_free_name(self, prefix='p'):
+        """First of <prefix>1, <prefix>2, ... that is neither a goal nor a program."""
+        if not NAME.match(prefix):
+            raise GoalFileError(f'prefix {prefix!r}: letters, digits and _ only, '
+                                'starting with a letter')
+        n = 1
+        while f'{prefix}{n}' in self.goals or f'{prefix}{n}' in self.programs:
+            n += 1
+        return f'{prefix}{n}'
+
+    def check_steps(self, steps, what=''):
+        """Raise GoalFileError (with the step number) unless every step is valid."""
+        if not steps:
+            raise GoalFileError(f'{what}needs at least one step'.strip())
+        for i, step in enumerate(steps, 1):
+            try:
+                check_step(step, f'{what}step {i}')
+            except GoalFileError as e:
+                raise GoalFileError(str(e), step=i)
+            if step.goal not in self.goals:
+                raise GoalFileError(f'{what}step {i}: unknown goal {step.goal!r}', step=i)
+
+    def set_program(self, name, steps):
+        if not NAME.match(name):
+            raise GoalFileError(f'program {name!r}: letters, digits and _ only, '
+                                'starting with a letter')
+        self.check_steps(steps, f'program {name!r} ')
+        self.programs[name] = list(steps)
+
+    def remove_program(self, name):
+        if name not in self.programs:
+            raise GoalFileError(f'no program {name!r} in {self.path}')
+        del self.programs[name]
+
+    def users(self, goal_name):
+        """Programs that use goal goal_name."""
+        return [p for p, steps in self.programs.items() if any(s.goal == goal_name for s in steps)]
+
     def remove_goal(self, name):
         if name not in self.goals or self.goals[name].source != 'file':
             raise GoalFileError(f'no goal {name!r} in {self.path}')
-        users = [p for p, steps in self.programs.items() if any(s.goal == name for s in steps)]
+        users = self.users(name)
         if users:
             raise GoalFileError(f'goal {name!r} is used by program(s) {", ".join(users)}')
         del self.goals[name]
