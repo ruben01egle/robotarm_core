@@ -1,5 +1,6 @@
 # Example goals file of the robotarm (tool axis_triad), see robotarm_motion/README.md.
-# Copy it to your goals file with: ros2 run robotarm_motion motion init
+# Copy it to the motion_server goals file:
+#   cp install/robotarm_motion/share/robotarm_motion/config/goals_example.yaml ~/.ros/robotarm_motion/goals.yaml
 # home and ready are the named states of the SRDF and need not be listed here.
 
 goals:

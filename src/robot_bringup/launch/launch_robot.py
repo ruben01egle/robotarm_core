@@ -32,7 +32,7 @@ def generate_launch_description():
         condition=IfCondition(moveit)
     )
 
-    # goals, programs and MoveIt jobs (GUI MOVEIT page, motion command line) inside a mission
+    # goals, programs and MoveIt jobs (GUI PROGRAM tab, motion command line) inside a mission
     include_motion_server = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(motion_share, 'launch', 'motion_server.launch.py')
