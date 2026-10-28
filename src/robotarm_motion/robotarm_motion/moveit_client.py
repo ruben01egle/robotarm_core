@@ -146,6 +146,8 @@ class MoveItClient:
         self._move_client = ActionClient(node, MoveGroup, 'move_action')
         self._execute_client = ActionClient(node, ExecuteTrajectory, 'execute_trajectory')
         self._fk_client = node.create_client(GetPositionFK, 'compute_fk')
+        # "stop" stops a running execution (as the Stop button of RViz); see cancel()
+        self._execution_event_pub = node.create_publisher(String, 'trajectory_execution_event', 10)
         self._goal_lock = threading.Lock()
         self._goal_handle = None
         self._joint_state = None
@@ -348,10 +350,17 @@ class MoveItClient:
         return self.execute(self.request(pipeline, planner, self.joint_goal(states[name])))
 
     def cancel(self):
-        """Cancel the running MoveGroup goal, if any (safe to call from any thread)."""
+        """
+        Cancel the running move_group goal, if any (safe to call from any thread).
+
+        move_group handles a cancel request only after the execution has finished (MoveIt 2.12),
+        so a running execution is stopped through /trajectory_execution_event; the goal then ends
+        with PREEMPTED.
+        """
         with self._goal_lock:
             handle = self._goal_handle
         if handle is not None:
+            self._execution_event_pub.publish(String(data='stop'))
             handle.cancel_goal_async()
 
     def fk(self, names, positions):
