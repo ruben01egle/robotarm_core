@@ -14,6 +14,12 @@ Only one job runs at a time; further goals are rejected. A STOP, ERROR, EMERGENC
 controller during the job aborts it (control_center deactivates the controller, the server cancels
 the running execution).
 
+The server owns the goals file; the GUI and the motion command line use its services:
+  ~/get_goals    (robotarm_interface/srv/GetGoals)    goals (incl. SRDF named states), programs
+  ~/teach_goal   (robotarm_interface/srv/TeachGoal)   save the current pose as a goal
+  ~/remove_goal  (robotarm_interface/srv/RemoveGoal)  delete a goal
+The file is read again for every request, so it can also be edited by hand.
+
 ROS parameters:
   goals_file        goals file (default $ROS_HOME/robotarm_motion/goals.yaml)
   default_scaling   velocity/acceleration scaling when a job does not set one (default 0.2)
@@ -21,6 +27,7 @@ ROS parameters:
   arm               true: arm the hardware if control_center is only CONNECTED (default false)
 """
 
+import re
 import threading
 
 import rclpy
@@ -30,11 +37,16 @@ from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 
 from robotarm_interface.action import RunMotion
+from robotarm_interface.srv import GetGoals, RemoveGoal, TeachGoal
+from robotarm_motion.goal_msgs import goal_to_msg, program_to_msg
 from robotarm_motion.goals import (
-    default_goals_file, GoalFile, GoalFileError, MOTIONS, segments, Step)
+    CartesianGoal, default_goals_file, GoalFile, GoalFileError, JointGoal, JOINTS, MOTIONS,
+    segments, Step)
 from robotarm_motion.mission import ControlCenterMission, MissionAborted, MissionError
 from robotarm_motion.moveit_client import load_named_states, MotionError, MoveItClient
 from robotarm_motion.planner import check_goal_file_steps, Planner
+
+GOAL_NAME = re.compile(r'^[A-Za-z][A-Za-z0-9_]*$')
 
 
 class JobError(RuntimeError):
@@ -60,10 +72,15 @@ class MotionServer(Node):
         self.mission = ControlCenterMission(self, self.moveit, controllers=[self.controller],
                                             arm=param('arm').value)
         self._busy = threading.Lock()
+        self._goals_lock = threading.Lock()   # around every read and write of the goals file
+        group = ReentrantCallbackGroup()
         self._action = ActionServer(
             self, RunMotion, '~/run', execute_callback=self._execute,
             goal_callback=self._on_goal, cancel_callback=self._on_cancel,
-            callback_group=ReentrantCallbackGroup())
+            callback_group=group)
+        self.create_service(GetGoals, '~/get_goals', self._get_goals, callback_group=group)
+        self.create_service(TeachGoal, '~/teach_goal', self._teach_goal, callback_group=group)
+        self.create_service(RemoveGoal, '~/remove_goal', self._remove_goal, callback_group=group)
         self.get_logger().info(
             f'motion_server ready, goals file {param("goals_file").value}, '
             f'executing on {self.controller}')
@@ -107,6 +124,80 @@ class MotionServer(Node):
             self._busy.release()
         return result
 
+    # ----- goals -----------------------------------------------------------------------------
+
+    def _goal_file(self):
+        return GoalFile(self.get_parameter('goals_file').value, load_named_states())
+
+    def _get_goals(self, _request, response):
+        response.goals_file = self.get_parameter('goals_file').value
+        try:
+            with self._goals_lock:
+                goal_file = self._goal_file()
+        except (GoalFileError, OSError) as e:
+            response.message = str(e)
+            return response
+        response.goals = [goal_to_msg(g) for _, g in sorted(goal_file.goals.items())]
+        response.programs = [program_to_msg(n, s) for n, s in sorted(goal_file.programs.items())]
+        response.success = True
+        return response
+
+    def _teach_goal(self, request, response):
+        try:
+            goal, replaced = self._teach(request.name, request.cartesian, request.overwrite)
+        except (JobError, GoalFileError, MotionError, OSError, TimeoutError) as e:
+            response.message = str(e)
+            return response
+        kind = 'Cartesian' if request.cartesian else 'joint'
+        response.message = f'{"replaced" if replaced else "saved"} {kind} goal {goal.name!r}'
+        response.goal = goal_to_msg(goal)
+        response.success = True
+        self.get_logger().info(response.message)
+        return response
+
+    def _teach(self, name, cartesian, overwrite):
+        """Save the current pose as goal name; returns (goal, replaced an existing one)."""
+        if not GOAL_NAME.match(name):
+            raise JobError(f'goal name {name!r}: letters, digits and _ only, '
+                           'starting with a letter')
+        if self._busy.locked():
+            raise JobError('a job is running')
+        current = self.moveit.current_joints()
+        missing = [j for j in JOINTS if j not in current]
+        if missing:
+            raise JobError(f'no joint state for {missing}')
+        joints = {j: current[j] for j in JOINTS}
+        if cartesian:
+            p = self.moveit.fk(JOINTS, [joints[j] for j in JOINTS])
+            o = p.orientation
+            goal = CartesianGoal(name, (p.position.x, p.position.y, p.position.z),
+                                 (o.x, o.y, o.z, o.w), seed=joints)
+        else:
+            goal = JointGoal(name, joints)
+        with self._goals_lock:
+            goal_file = self._goal_file()
+            existing = goal_file.goals.get(name)
+            if existing is not None and not overwrite:
+                raise JobError(f'goal {name!r} exists ({existing.source}), '
+                               'set overwrite to replace it')
+            goal_file.set_goal(goal)
+            goal_file.save()
+        return goal, existing is not None
+
+    def _remove_goal(self, request, response):
+        try:
+            with self._goals_lock:
+                goal_file = self._goal_file()
+                goal_file.remove_goal(request.name)
+                goal_file.save()
+        except (GoalFileError, OSError) as e:
+            response.message = str(e)
+            return response
+        response.message = f'removed goal {request.name!r}'
+        response.success = True
+        self.get_logger().info(response.message)
+        return response
+
     # ----- job -------------------------------------------------------------------------------
 
     def _feedback(self, goal_handle, phase, segment=0, segments_=0):
@@ -119,8 +210,8 @@ class MotionServer(Node):
         scaling = req.scaling or self.get_parameter('default_scaling').value
         if not 0 < scaling <= 1:
             raise JobError(f'scaling must be in (0, 1], got {scaling}')
-        path = self.get_parameter('goals_file').value
-        goal_file = GoalFile(path, load_named_states())
+        with self._goals_lock:
+            goal_file = self._goal_file()
         if req.program:
             steps = goal_file.program(req.program)
             what = f'program {req.program!r}'

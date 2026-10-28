@@ -34,7 +34,7 @@ PILZ_MOTIONS = ('PTP', 'LIN')
 
 HEADER = """\
 # robotarm goals file, see robotarm_motion/README.md ("Goals file").
-# Written by `ros2 run robotarm_motion motion teach/remove`: comments added by hand are lost then.
+# Written by the motion_server on teach/remove: comments added by hand are lost then.
 """
 
 

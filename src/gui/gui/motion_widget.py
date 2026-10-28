@@ -7,12 +7,9 @@ inside its own control_center mission and reports phases and result back. While 
 active_nodes of /system_status is "motion_server", so the page navigation of the main window is
 locked like during any other mission.
 
-Goals and programs come from the goals file of the motion_server (its parameter goals_file);
-"Teach" writes the current pose into the same file. See robotarm_motion/README.md.
+Goals and programs come from the motion_server, which owns the goals file (services get_goals and
+teach_goal); the page never reads or writes the file itself. See robotarm_motion/README.md.
 """
-
-import math
-import re
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
@@ -20,14 +17,11 @@ from PyQt6.QtWidgets import (QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, 
 
 from action_msgs.msg import GoalStatus
 import rclpy
-from rcl_interfaces.srv import GetParameters
 from rclpy.action import ActionClient
-from sensor_msgs.msg import JointState
 
-from robotarm_motion.goals import (CartesianGoal, default_goals_file, FRAME, GoalFile,
-                                   GoalFileError, JointGoal, JOINTS, quat_from_rpy)
-from robotarm_motion.moveit_client import load_named_states
 from robotarm_interface.action import RunMotion
+from robotarm_interface.msg import MotionGoal
+from robotarm_interface.srv import GetGoals, TeachGoal
 
 from .controller_modes import POSITION
 
@@ -35,7 +29,6 @@ MOTION_SERVER = 'motion_server'
 TRAJECTORY_CONTROLLER = 'joint_trajectory_controller'
 PROGRAM, GOAL = 'program', 'goal'
 MOTIONS = ['PTP', 'LIN', 'OMPL']
-GOAL_NAME = re.compile(r'^[A-Za-z][A-Za-z0-9_]*$')
 
 BUTTON_STYLE = """
     QPushButton {{ background-color: {color}; color: white; font-weight: bold; }}
@@ -51,16 +44,17 @@ class MotionWidget(QWidget):
         self.name = "MotionWidget"
 
         self.action_client = ActionClient(self.node, RunMotion, f'/{MOTION_SERVER}/run')
-        self.param_client = self.node.create_client(
-            GetParameters, f'/{MOTION_SERVER}/get_parameters')
-        # Same file as the motion_server: its parameter, the default until it has been read
-        self.goals_file = default_goals_file()
-        self.goals_file_read = False
-        self.goals_file_pending = False
+        self.get_goals_client = self.node.create_client(GetGoals, f'/{MOTION_SERVER}/get_goals')
+        self.teach_client = self.node.create_client(TeachGoal, f'/{MOTION_SERVER}/teach_goal')
 
-        # Joint names and positions for "Teach joint goal" (the data store has no joint names)
-        self.joint_state = None
-        self.node.create_subscription(JointState, '/joint_states', self.joint_state_cb, 10)
+        # Goals of the motion_server: responses arrive in the ROS thread, applied by update_widget
+        self.goals_loaded = False
+        self.goals_pending = False
+        self.goals_response = None
+        self.goal_sources = {}          # goal name -> MotionGoal.SOURCE_*
+        self.select_after_reload = None
+        self.teach_pending = False
+        self.teach_result = None        # (ok, message, name), taken by update_widget
 
         # Job state: written by ROS callbacks (ROS thread), read by update_widget (Qt thread)
         self.goal_handle = None
@@ -77,7 +71,6 @@ class MotionWidget(QWidget):
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setSpacing(10)
         self.init_ui()
-        self.reload_goals()
 
     # ----- UI ------------------------------------------------------------------------------------
 
@@ -99,7 +92,7 @@ class MotionWidget(QWidget):
         row.addWidget(self.target_combo, stretch=1)
         self.btn_reload = QPushButton("⟳")
         self.btn_reload.setFixedWidth(32)
-        self.btn_reload.setToolTip("Reload the goals file")
+        self.btn_reload.setToolTip("Reload goals and programs from the motion_server")
         self.btn_reload.clicked.connect(self.reload_goals)
         row.addWidget(self.btn_reload)
         target_layout.addLayout(row)
@@ -202,29 +195,41 @@ class MotionWidget(QWidget):
         # MoveIt trajectories are position controlled (no compliant variant yet)
         return POSITION
 
-    # ----- goals file ----------------------------------------------------------------------------
+    # ----- goals -------------------------------------------------------------------------------
 
     def reload_goals(self):
-        previous = self.target_combo.currentData()
+        """Ask the motion_server for its goals and programs (applied in update_widget)."""
+        if self.goals_pending or not self.ros_ok() or not self.get_goals_client.service_is_ready():
+            return
+        self.goals_pending = True
+        future = self.get_goals_client.call_async(GetGoals.Request())
+
+        def done(f):
+            self.goals_response = f.result()
+            self.goals_pending = False
+        future.add_done_callback(done)
+
+    def apply_goals(self, res):
+        self.goals_loaded = True
+        if res is None or not res.success:
+            self.show_result(False, f"Goals file: {res.message if res else 'no response'}")
+            return
+        previous = self.select_after_reload or self.target_combo.currentData()
+        self.select_after_reload = None
         self.target_combo.blockSignals(True)
         self.target_combo.clear()
-        try:
-            goal_file = GoalFile(self.goals_file, load_named_states())
-        except (GoalFileError, OSError) as e:
-            self.show_result(False, f"Goals file: {e}")
-            goal_file = None
-        if goal_file is not None:
-            for name in sorted(goal_file.programs):
-                steps = len(goal_file.programs[name])
-                self.target_combo.addItem(f"▶ {name}  ({steps} steps)", (PROGRAM, name))
-            for name, goal in sorted(goal_file.goals.items()):
-                kind = 'joint' if isinstance(goal, JointGoal) else 'cartesian'
-                source = ', SRDF' if goal.source == 'srdf' else ''
-                self.target_combo.addItem(f"● {name}  ({kind}{source})", (GOAL, name))
+        for program in res.programs:
+            self.target_combo.addItem(f"▶ {program.name}  ({len(program.steps)} steps)",
+                                      (PROGRAM, program.name))
+        for goal in res.goals:
+            kind = 'joint' if goal.type == MotionGoal.TYPE_JOINT else 'cartesian'
+            source = ', SRDF' if goal.source == MotionGoal.SOURCE_SRDF else ''
+            self.target_combo.addItem(f"● {goal.name}  ({kind}{source})", (GOAL, goal.name))
+        self.goal_sources = {goal.name: goal.source for goal in res.goals}
         index = self.find_target(*previous) if previous else -1
         self.target_combo.setCurrentIndex(max(index, 0))
         self.target_combo.blockSignals(False)
-        self.goals_file_label.setText(self.goals_file)
+        self.goals_file_label.setText(res.goals_file)
         self.update_ui_lock_state()
 
     def find_target(self, kind, name):
@@ -233,25 +238,6 @@ class MotionWidget(QWidget):
             if self.target_combo.itemData(i) == (kind, name):
                 return i
         return -1
-
-    def fetch_goals_file(self):
-        """Read the goals_file parameter of the motion_server once it is available."""
-        if self.goals_file_read or self.goals_file_pending or not self.ros_ok() \
-                or not self.param_client.service_is_ready():
-            return
-        self.goals_file_pending = True
-        future = self.param_client.call_async(GetParameters.Request(names=['goals_file']))
-
-        def done(f):
-            self.goals_file_pending = False
-            try:
-                value = f.result().values[0].string_value
-            except Exception:
-                return
-            if value:
-                self.goals_file = value
-                self.goals_file_read = True
-        future.add_done_callback(done)
 
     # ----- jobs ----------------------------------------------------------------------------------
 
@@ -314,47 +300,26 @@ class MotionWidget(QWidget):
 
     # ----- teach ---------------------------------------------------------------------------------
 
-    def joint_state_cb(self, msg):
-        self.joint_state = msg
-
     def teach(self, cartesian):
+        """Let the motion_server save the current pose as a goal (replaces a goal of the file)."""
         name = self.teach_name.text().strip()
-        if not GOAL_NAME.match(name):
-            self.show_result(False, "Goal name: letters, digits and _ only, starting with a letter")
+        if self.goal_sources.get(name) == MotionGoal.SOURCE_SRDF:
+            self.show_result(False, f"'{name}' is a named state of the SRDF, pick another name")
             return
-        msg = self.joint_state
-        joints = dict(zip(msg.name, msg.position)) if msg is not None else {}
-        if not all(j in joints for j in JOINTS):
-            self.show_result(False, "No joint state of all six axes received yet")
+        if not self.ros_ok() or not self.teach_client.service_is_ready():
+            self.show_result(False, "motion_server not running")
             return
-        joints = {j: joints[j] for j in JOINTS}
-        try:
-            goal_file = GoalFile(self.goals_file, load_named_states())
-            if name in goal_file.goals and goal_file.goals[name].source == 'srdf':
-                self.show_result(False, f"'{name}' is a named state of the SRDF, pick another name")
-                return
-            if cartesian:
-                pose = self.store.get_current_tcp_pose()
-                if pose is None or self.store.get_base_frame() != FRAME:
-                    self.show_result(False, f"No tcp pose in frame '{FRAME}' available (TF)")
-                    return
-                goal = CartesianGoal(name, tuple(pose[:3]), quat_from_rpy(*pose[3:]), seed=joints)
-            else:
-                goal = JointGoal(name, joints)
-            replaced = name in goal_file.goals
-            goal_file.set_goal(goal)
-            goal_file.save()
-        except (GoalFileError, OSError) as e:
-            self.show_result(False, f"Teach failed: {e}")
-            return
-        kind = "Cartesian" if cartesian else "joint"
-        self.show_result(True, f"{'Replaced' if replaced else 'Saved'} {kind} goal '{name}'")
-        self.node.get_logger().info(f"{self.name}: taught {kind} goal '{name}' "
-                                    f"({', '.join(f'{math.degrees(v):.1f}' for v in joints.values())} deg)")
-        self.reload_goals()
-        index = self.find_target(GOAL, name)
-        if index >= 0:
-            self.target_combo.setCurrentIndex(index)
+        self.teach_pending = True
+        future = self.teach_client.call_async(
+            TeachGoal.Request(name=name, cartesian=cartesian, overwrite=True))
+
+        def done(f):
+            res = f.result()
+            self.teach_result = (res.success, res.message, name) if res else \
+                (False, "Teach failed: no response", name)
+            self.teach_pending = False
+        future.add_done_callback(done)
+        self.update_ui_lock_state()
 
     # ----- state ---------------------------------------------------------------------------------
 
@@ -382,8 +347,9 @@ class MotionWidget(QWidget):
         self.btn_plan.setEnabled(idle and has_target)
         self.btn_execute.setEnabled(idle and has_target and status["armed"] and not foreign_mission)
         self.btn_cancel.setEnabled(self.job_running)
-        self.btn_teach_joint.setEnabled(not self.job_running)
-        self.btn_teach_cart.setEnabled(not self.job_running)
+        teach = self.available and not self.job_running and not self.teach_pending
+        self.btn_teach_joint.setEnabled(teach)
+        self.btn_teach_cart.setEnabled(teach)
 
         if self.job_running:
             verb = "Planning" if self.job_plan_only else "Running"
@@ -433,9 +399,17 @@ class MotionWidget(QWidget):
             self.unavailable_reason = (f"{TRAJECTORY_CONTROLLER} not loaded on the RT PC "
                                        "(firmware patch, see robotarm_moveit_config doc/)")
 
-        if server:
-            self.fetch_goals_file()
-            if self.goals_file_read and self.goals_file_label.text() != self.goals_file:
+        if server and not self.goals_loaded:
+            self.reload_goals()
+        if self.goals_response is not None:
+            res, self.goals_response = self.goals_response, None
+            self.apply_goals(res)
+        if self.teach_result is not None:
+            ok, message, name = self.teach_result
+            self.teach_result = None
+            self.show_result(ok, message)
+            if ok:
+                self.select_after_reload = (GOAL, name)
                 self.reload_goals()
 
         if self.job_result is not None:
