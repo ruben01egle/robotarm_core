@@ -27,7 +27,7 @@ from sensor_msgs.msg import JointState
 from robotarm_motion.goals import (CartesianGoal, default_goals_file, FRAME, GoalFile,
                                    GoalFileError, JointGoal, JOINTS, quat_from_rpy)
 from robotarm_motion.moveit_client import load_named_states
-from robotarm_motion_msgs.action import RunMotion
+from robotarm_interface.action import RunMotion
 
 from .controller_modes import POSITION
 

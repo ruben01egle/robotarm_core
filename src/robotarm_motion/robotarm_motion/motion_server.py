@@ -32,13 +32,13 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 
+from robotarm_interface.action import RunMotion
 from robotarm_motion.executor import TrajectoryExecutor
 from robotarm_motion.goals import (
     default_goals_file, GoalFile, GoalFileError, MOTIONS, segments, Step)
 from robotarm_motion.mission import ControlCenterMission, MissionAborted, MissionError
 from robotarm_motion.moveit_client import load_named_states, MotionError, MoveItClient
 from robotarm_motion.planner import check_goal_file_steps, Planner
-from robotarm_motion_msgs.action import RunMotion
 
 
 class JobError(RuntimeError):
@@ -125,7 +125,7 @@ class MotionServer(Node):
         scaling = req.scaling or self.get_parameter('default_scaling').value
         if not 0 < scaling <= 1:
             raise JobError(f'scaling must be in (0, 1], got {scaling}')
-        path = req.goals_file or self.get_parameter('goals_file').value
+        path = self.get_parameter('goals_file').value
         goal_file = GoalFile(path, load_named_states())
         if req.program:
             steps = goal_file.program(req.program)

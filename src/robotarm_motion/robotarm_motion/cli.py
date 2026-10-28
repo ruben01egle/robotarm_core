@@ -26,12 +26,12 @@ import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
+from robotarm_interface.action import RunMotion
 from robotarm_motion.goals import (
     CartesianGoal, default_goals_file, GoalFile, GoalFileError, JointGoal, JOINTS, MOTIONS,
     rpy_from_quat)
 from robotarm_motion.moveit_client import (
     load_named_states, MotionError, MoveItClient, spin_in_background, wait_for)
-from robotarm_motion_msgs.action import RunMotion
 
 EXAMPLE = os.path.join(get_package_share_directory('robotarm_motion'), 'config',
                        'goals_example.yaml')
@@ -145,7 +145,6 @@ def cmd_motion(args):
         goal.motion = args.motion
     goal.scaling = args.scaling
     goal.plan_only = args.plan_only
-    goal.goals_file = args.goals if args.goals_given else ''
 
     def run(node):
         client = ActionClient(node, RunMotion, '/motion_server/run')

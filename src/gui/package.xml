@@ -17,7 +17,6 @@
   <depend>robotarm_interface</depend>
   <depend>utility</depend>
   <depend>robotarm_motion</depend>
-  <depend>robotarm_motion_msgs</depend>
   <depend>action_msgs</depend>
 
   <exec_depend>python3-pyqt6</exec_depend>
