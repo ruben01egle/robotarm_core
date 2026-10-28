@@ -15,22 +15,44 @@ Visualization Manager:
       Cell Size: 0.1
       Plane Cell Count: 20
       Value: true
+    # The actual robot, solid: follows /tf (robot_state_publisher) at the /joint_states rate
+    - Class: rviz_default_plugins/RobotModel
+      Name: Robot
+      Alpha: 1
+      Description Source: Topic
+      Description Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /robot_description
+      TF Prefix: ""
+      Visual Enabled: true
+      Collision Enabled: false
+      Value: true
+    # MoveIt: only the planned motion (see-through); its own robot (scene robot) is hidden, and the
+    # goal robot of the RViz planning panel (orange) is off; enable "Query Goal State" to use it
     - Class: moveit_rviz_plugin/MotionPlanning
       Name: MotionPlanning
       Planned Path:
         Loop Animation: false
+        Show Robot Visual: true
+        Show Robot Collision: false
+        Robot Alpha: 0.4
         State Display Time: 0.05 s
         Trajectory Topic: display_planned_path
       Planning Request:
         Planning Group: arm
         Interactive Marker Size: 0.2
         Query Start State: false
-        Query Goal State: true
+        Query Goal State: false
       Planning Scene Topic: monitored_planning_scene
       Robot Description: robot_description
       Scene Geometry:
         Scene Alpha: 1
       Scene Robot:
+        Show Robot Visual: false
+        Show Robot Collision: false
         Robot Alpha: 0.5
       Value: true
   Global Options:

@@ -78,6 +78,9 @@ def launch_setup(context):
                     LaunchConfiguration('allow_trajectory_execution').perform(context) == 'true',
                 # do not copy velocities/efforts from /joint_states into the planning scene
                 'monitor_dynamics': False,
+                # rate of /monitored_planning_scene (default 4 Hz: robot and objects in RViz
+                # and other scene subscribers move in visible steps)
+                'publish_planning_scene_hz': 20.0,
             },
             sim_time,
         ],

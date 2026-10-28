@@ -64,7 +64,7 @@ control_center activates and deactivates `ff_controller` in the same request as 
 | `config/pilz_industrial_motion_planner_planning.yaml` | Pilz pipeline and sequence capability |
 | `config/moveit_controllers.yaml` | `moveit_simple_controller_manager` → `joint_trajectory_controller`, execution tolerances |
 | `config/ros2_controllers.yaml` | ros2_control for the demo only (the RT PC has its own) |
-| `config/moveit.rviz` | RViz with the MotionPlanning panel |
+| `config/moveit.rviz` | RViz: solid robot = actual state (`/tf`), see-through = planned motion; the panel's goal robot is off ("Query Goal State" to use it) |
 | `launch/demo.launch.py` | standalone demo with mock hardware (`rviz:=`) |
 | `launch/move_group.launch.py` | move_group (+ RViz) against the real ros2_control stack (`rviz:=`, `tool:=`, `use_sim_time:=`, `allow_trajectory_execution:=`) |
 | `launch/setup_assistant.launch.py` | Setup Assistant on the *installed* copy |
