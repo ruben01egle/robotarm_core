@@ -157,6 +157,6 @@ class ComplianceWidget(QWidget):
 
         status = self.store.get_status()
         mode = None
-        if self.name in status["active_nodes"]:
+        if status["active_node"] == self.name:
             mode = HAND_GUIDING if GC_CONTROLLER in self.store.get_active_controller_list() else COMPLIANT_HOLD
         self.set_active_mode(mode, status["state"])

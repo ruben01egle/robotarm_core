@@ -19,15 +19,16 @@ import time
 from robotarm_interface.srv import RequestAction
 from robotarm_interface.msg import SystemStatus
 
+# Werte = Konstanten von SystemStatus.msg, so wird state ohne Umrechnung publiziert
 class SystemState(Enum):
-        IDLE            = 0x0
-        CONNECTED       = 0x1
-        ARMED           = 0x2
-        MISSION         = 0x3
-        CONFIG          = 0x4
-        STOP            = 0x5
-        ERROR           = 0x66
-        EMERGENCY       = 0xFF
+        IDLE            = SystemStatus.IDLE
+        CONNECTED       = SystemStatus.CONNECTED
+        ARMED           = SystemStatus.ARMED
+        MISSION         = SystemStatus.MISSION
+        CONFIG          = SystemStatus.CONFIG
+        STOP            = SystemStatus.STOP
+        ERROR           = SystemStatus.ERROR
+        EMERGENCY       = SystemStatus.EMERGENCY
 
 class ControlCenterNode(Node):
 
@@ -434,14 +435,14 @@ class ControlCenterNode(Node):
     def publish_status_cb(self):
         try:
             msg = SystemStatus()
-            msg.state = str(self.state.name)
+            msg.state = self.state.value
             
             msg.connected = self.state != SystemState.IDLE and self.state != SystemState.ERROR
             msg.armed = self.state in [SystemState.ARMED, SystemState.MISSION]
             msg.stopped = self.state in [SystemState.STOP]
             
-            msg.active_controllers = ", ".join(self.active_controllers)
-            msg.active_nodes = self.active_node if self.active_node else ""
+            msg.active_controllers = list(self.active_controllers)
+            msg.active_node = self.active_node if self.active_node else ""
 
             self.status_pub.publish(msg)
             

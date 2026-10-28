@@ -181,7 +181,7 @@ class RobotMainWindow(QMainWindow):
 
     def update_nav_lock(self):
         """Solange eine Mission aktiv ist, darf die Control-Seite nicht gewechselt werden."""
-        mission_active = bool(self.data_store.get_status()["active_nodes"])
+        mission_active = bool(self.data_store.get_status()["active_node"])
         for btn in self.nav_buttons:
             btn.setEnabled(not mission_active)
 

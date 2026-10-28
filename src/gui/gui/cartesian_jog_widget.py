@@ -434,7 +434,7 @@ class CartesianJogWidget(QWidget):
             set_available(controller_set(CARTESIAN_JOG_CONTROLLERS, COMPLIANT), loaded))
 
         status = self.store.get_status()
-        self.set_movement_allowed(self.name in status["active_nodes"], status["state"])
+        self.set_movement_allowed(status["active_node"] == self.name, status["state"])
 
         if not self.movement_enabled:
             return

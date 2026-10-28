@@ -143,8 +143,8 @@ class ControlHeader(QWidget):
         state = status["state"]
         armed = status["armed"]
         stopped = status["stopped"]
-        active_nodes = status["active_nodes"]
-        active_controllers = status["active_controllers"]
+        active_node = status["active_node"]
+        active_controllers = ", ".join(status["active_controllers"])
         
         # 1. Verbindung anlegen
         color = "#2ecc71" if connected else "#e74c3c"
@@ -156,7 +156,7 @@ class ControlHeader(QWidget):
         self.state_label.setText(f"STATE: {state.upper()}")
 
         # 3. Active Nodes & Controllers Texte aktualisieren
-        self.nodes_label.setText(f"Nodes: {active_nodes if active_nodes else 'none'}")
+        self.nodes_label.setText(f"Nodes: {active_node if active_node else 'none'}")
         self.controllers_label.setText(f"Controllers: {active_controllers if active_controllers else 'none'}")
 
         # 4. Arm-Button Sync

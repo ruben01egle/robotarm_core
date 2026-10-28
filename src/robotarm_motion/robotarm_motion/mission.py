@@ -29,6 +29,12 @@ from robotarm_interface.srv import RequestAction
 
 from robotarm_motion.moveit_client import MotionError, wait_for
 
+# SystemStatus.state -> name, for messages
+STATE_NAMES = {
+    getattr(SystemStatus, name): name
+    for name in ('IDLE', 'CONNECTED', 'ARMED', 'MISSION', 'CONFIG', 'STOP', 'ERROR', 'EMERGENCY')
+}
+
 
 class MissionError(RuntimeError):
     """A mission could not be started or stopped."""
@@ -70,10 +76,10 @@ class ControlCenterMission:
         self._status_event.set()
         if not self.active or self.aborted is not None:
             return
-        if msg.state == 'MISSION':
+        if msg.state == SystemStatus.MISSION:
             self._mission_seen = True
         elif self._mission_seen:
-            self.aborted = f'control_center switched to {msg.state}'
+            self.aborted = f'control_center switched to {STATE_NAMES.get(msg.state, msg.state)}'
             self.node.get_logger().error(f'{self.aborted}: cancelling the running motion')
             self.moveit.cancel()
 
@@ -85,7 +91,9 @@ class ControlCenterMission:
             if self.state in states:
                 return self.state
             self._status_event.wait(0.5)
-        raise MissionError(f'control_center is {self.state}, expected one of {states}')
+        names = [STATE_NAMES[s] for s in states]
+        raise MissionError(f'control_center is {STATE_NAMES.get(self.state, self.state)}, '
+                           f'expected one of {names}')
 
     def _request(self, action_id, request_type):
         if not self._client.wait_for_service(timeout_sec=self.timeout):
@@ -101,17 +109,17 @@ class ControlCenterMission:
 
     def start(self):
         """Arm if requested, then start the mission (activates the controller)."""
-        state = self._wait_for_state(('CONNECTED', 'ARMED'), self.timeout)
-        if state == 'CONNECTED':
+        state = self._wait_for_state((SystemStatus.CONNECTED, SystemStatus.ARMED), self.timeout)
+        if state == SystemStatus.CONNECTED:
             if not self.arm:
                 raise MissionError('control_center is CONNECTED, arm the robot first')
             self._request(RequestAction.Request.ACTION_ARM_ROBOT, RequestAction.Request.TYPE_START)
-            self._wait_for_state(('ARMED',), self.timeout)
+            self._wait_for_state((SystemStatus.ARMED,), self.timeout)
         self._request(RequestAction.Request.ACTION_MISSION, RequestAction.Request.TYPE_START)
         self.aborted = None
         self._mission_seen = False
         self.active = True
-        self._wait_for_state(('MISSION',), self.timeout)
+        self._wait_for_state((SystemStatus.MISSION,), self.timeout)
         self.node.get_logger().info(f'mission started, {", ".join(self.controllers)} active')
 
     def stop(self):

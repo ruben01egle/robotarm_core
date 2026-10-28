@@ -19,8 +19,8 @@ class GuiDataStore:
         self.armed = False
         self.state = "UNKNOWN"
         self.stopped = False
-        self.active_nodes = ""
-        self.active_controllers = ""
+        self.active_node = ""
+        self.active_controllers = []
 
         self.joint_limits = list()
         # Root-Link der URDF (Basis-Frame für die TCP-Pose), None bis die URDF gelesen wurde
@@ -47,8 +47,8 @@ class GuiDataStore:
             self.armed = False
             self.state = "UNKNOWN"
             self.stopped = False
-            self.active_nodes = ""
-            self.active_controllers = ""
+            self.active_node = ""
+            self.active_controllers = []
             self.joint_limits = list()
             self.base_frame = None
             self.cartesian_limits = {}
@@ -157,14 +157,14 @@ class GuiDataStore:
             self.stiffness_apply_result = None
             return result
 
-    def set_status(self, state, connected, armed, stopped, active_nodes, active_controllers):
+    def set_status(self, state, connected, armed, stopped, active_node, active_controllers):
         with self._lock:
             self.state = state
             self.connected = connected
             self.armed = armed
             self.stopped = stopped
-            self.active_nodes = active_nodes
-            self.active_controllers = active_controllers
+            self.active_node = active_node
+            self.active_controllers = list(active_controllers)
 
     def add_log(self, level, name, text):
         """Wird von der ROS-Node aufgerufen, um Logs zu puffern."""
@@ -215,14 +215,14 @@ class GuiDataStore:
                 "armed": self.armed,
                 "state": self.state,
                 "stopped": self.stopped,
-                "active_nodes": self.active_nodes,
-                "active_controllers": self.active_controllers
+                "active_node": self.active_node,
+                "active_controllers": list(self.active_controllers)
             }
 
     def get_active_controller_list(self) -> list:
-        """active_controllers des control_center (", "-getrennt) als Liste."""
+        """Controller-Set der laufenden Mission des control_center."""
         with self._lock:
-            return [name.strip() for name in self.active_controllers.split(",") if name.strip()]
+            return list(self.active_controllers)
     
     # --- Live-Getter für dein JointJogWidget ---
     def get_current_positions(self) -> list:

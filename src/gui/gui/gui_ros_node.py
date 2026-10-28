@@ -21,6 +21,12 @@ from .controller_modes import CARTESIAN_JOG_CONTROLLERS, IMPEDANCE_CONTROLLER
 
 from robotarm_interface.msg import SystemStatus
 
+# SystemStatus.state -> Name für die Anzeige
+STATE_NAMES = {
+    getattr(SystemStatus, name): name
+    for name in ('IDLE', 'CONNECTED', 'ARMED', 'MISSION', 'CONFIG', 'STOP', 'ERROR', 'EMERGENCY')
+}
+
 # Name des TCP-Links ist in der URDF fest vorgegeben
 TCP_FRAME = 'tcp'
 
@@ -89,7 +95,7 @@ class GuiRosNode(Node):
         self.impedance_was_active = False
         self.create_subscription(ParameterEvent, '/parameter_events', self.parameter_event_cb, 10)
 
-        self.store.set_status(state="UNKNOWN", connected=False, armed=False, stopped=False, active_nodes="", active_controllers="")
+        self.store.set_status(state="UNKNOWN", connected=False, armed=False, stopped=False, active_node="", active_controllers=[])
 
     def joint_state_cb(self, msg: JointState):
         try:
@@ -141,10 +147,11 @@ class GuiRosNode(Node):
         self.store.add_log(level_str, msg.name, msg.msg)
 
     def system_status_cb(self, msg: SystemStatus):
-        self.store.set_status(msg.state, msg.connected, msg.armed, msg.stopped, msg.active_nodes, msg.active_controllers)
+        state = STATE_NAMES.get(msg.state, f"UNKNOWN ({msg.state})")
+        self.store.set_status(state, msg.connected, msg.armed, msg.stopped, msg.active_node, msg.active_controllers)
 
         # Bei jeder Aktivierung neu lesen, nach einem Reconfigure können sich die Limits geändert haben
-        impedance_active = IMPEDANCE_CONTROLLER in [c.strip() for c in msg.active_controllers.split(",")]
+        impedance_active = IMPEDANCE_CONTROLLER in msg.active_controllers
         if impedance_active and not self.impedance_was_active:
             self.request_stiffness_read()
         self.impedance_was_active = impedance_active

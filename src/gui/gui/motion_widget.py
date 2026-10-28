@@ -4,7 +4,7 @@ MoveIt page: plan and execute goals and programs through the motion_server.
 The page itself never activates a controller or sends a trajectory. It sends jobs to the
 motion_server (robotarm_motion, action /motion_server/run), which plans them with MoveIt, runs them
 inside its own control_center mission and reports phases and result back. While a job executes,
-active_nodes of /system_status is "motion_server", so the page navigation of the main window is
+active_node of /system_status is "motion_server", so the page navigation of the main window is
 locked like during any other mission.
 
 Goals and programs come from the motion_server, which owns the goals file (services get_goals and
@@ -335,7 +335,7 @@ class MotionWidget(QWidget):
 
     def update_ui_lock_state(self):
         status = self.store.get_status()
-        foreign_mission = bool(status["active_nodes"]) and MOTION_SERVER not in status["active_nodes"]
+        foreign_mission = bool(status["active_node"]) and status["active_node"] != MOTION_SERVER
         idle = self.available and not self.job_running
         has_target = self.target_combo.currentData() is not None
         is_goal = has_target and self.target_combo.currentData()[0] == GOAL
@@ -362,7 +362,7 @@ class MotionWidget(QWidget):
             self.status_label.setText("Robot not armed: PLAN only")
             self.status_label.setStyleSheet("color: #95a5a6;")
         elif foreign_mission:
-            self.status_label.setText(f"Mission of {status['active_nodes']} active: PLAN only")
+            self.status_label.setText(f"Mission of {status['active_node']} active: PLAN only")
             self.status_label.setStyleSheet("color: #95a5a6;")
         else:
             self.status_label.setText("Ready")

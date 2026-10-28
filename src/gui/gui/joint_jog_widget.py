@@ -280,8 +280,7 @@ class JointJogWidget(QWidget):
             set_available(controller_set(JOINT_STREAM_CONTROLLERS, COMPLIANT), loaded))
 
         status = self.store.get_status()
-        active_nodes_string = status["active_nodes"]
-        if self.name in active_nodes_string:
+        if status["active_node"] == self.name:
             self.set_movement_allowed(True)
         else:
             self.set_movement_allowed(False)
