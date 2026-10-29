@@ -64,7 +64,7 @@ control_center activates and deactivates `ff_controller` in the same request as 
 | `config/pilz_industrial_motion_planner_planning.yaml` | Pilz pipeline and sequence capability |
 | `config/moveit_controllers.yaml` | `moveit_simple_controller_manager` → `joint_trajectory_controller`, execution tolerances |
 | `config/ros2_controllers.yaml` | ros2_control for the demo only (the RT PC has its own) |
-| `config/moveit.rviz` | RViz: solid robot = actual state (RobotModel, `/tf`), see-through = planned motion (Trajectory), collision objects (PlanningScene); no MotionPlanning display |
+| `config/moveit.rviz` | RViz: solid robot = actual state (RobotModel, `/tf`), see-through = planned motion (Trajectory), collision objects (PlanningScene), frames (TF); no MotionPlanning display. Installed as a symlink with `--symlink-install`, so *File → Save Config* writes here |
 | `launch/demo.launch.py` | standalone demo with mock hardware (`rviz:=`) |
 | `launch/move_group.launch.py` | move_group (+ RViz) against the real ros2_control stack (`rviz:=`, `tool:=`, `use_sim_time:=`, `allow_trajectory_execution:=`) |
 | `launch/setup_assistant.launch.py` | Setup Assistant on the *installed* copy |
@@ -167,6 +167,11 @@ ros2 launch robot_bringup launch_robot.py tool:=axis_triad use_sim_time:=true # 
 ros2 launch robot_bringup launch_robot.py tool:=none                          # C
 #   options: moveit:=false  rviz:=false  gui:=false
 ```
+
+With the sim (B), `use_sim_time:=true` is required (VS Code task "Run Sim"): the sim stamps
+`/joint_states` with its own clock, and without it move_group refuses every execution ("Didn't
+receive robot state ... with recent timestamp", the job fails with `CONTROL_FAILED`). Mock and real
+robot use wall-clock time, so leave it off there.
 
 No windows ("Authorization required")? Run `xhost +local:` on the host and start again.
 
@@ -276,9 +281,10 @@ References: `kdl_kinematics_plugin` (moveit_kinematics) and pick_ik.
 1. **First run on the real robot**: mock and sim first, then hardware at 10 % with the e-stop in hand.
    Check that the firmware's trajectory tolerances (`controllers.yaml`, PRELIMINARY: 0.1 rad while
    moving, 0.01 rad at the goal) trigger, e.g. by gently blocking a joint at low speed.
-2. **ff_controller not tested here**: the switching (one request with `ff_controller`) is unit
-   tested; check on the firmware mock/sim that every mode engages and disengages without the arm
-   sagging, and that `list_controllers` always shows one of the valid combinations.
+2. **ff_controller on the real robot**: the switching (one request with `ff_controller`) is unit
+   tested and runs in the MuJoCo sim; on the hardware, check that every mode engages and
+   disengages without the arm sagging and that `list_controllers` always shows one of the valid
+   combinations.
 3. **No access control during a mission**: while a mission keeps a controller active, any node
    sending trajectories or jog commands moves the arm. Closing that needs SROS2.
 4. **control_center is not enforced**: `ros2 control switch_controllers` bypasses it; it only
