@@ -4,9 +4,9 @@ Panels:
     Name: Displays
     Property Tree Widget:
       Expanded:
-        - /MotionPlanning1
+        - /TF1
       Splitter Ratio: 0.5
-    Tree Height: 415
+    Tree Height: 760
   - Class: rviz_common/Help
     Name: Help
   - Class: rviz_common/Views
@@ -108,6 +108,60 @@ Visualization Manager:
       Color Enabled: false
       Enabled: true
       Interrupt Display: false
+      Links:
+        All Links Enabled: true
+        Expand Joint Details: false
+        Expand Link Details: false
+        Expand Tree: false
+        Link Tree Style: Links in Alphabetic Order
+        axis_triad_body:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        base:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        flange:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        stage1:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        stage2:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        stage3:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        stage4:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        stage5:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        stage6:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        tcp:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
       Loop Animation: false
       Name: Planned Path
       Robot Alpha: 0.4000000059604645
@@ -136,9 +190,106 @@ Visualization Manager:
         Voxel Rendering: Occupied Voxels
       Scene Robot:
         Attached Body Color: 150; 50; 150
+        Links:
+          All Links Enabled: true
+          Expand Joint Details: false
+          Expand Link Details: false
+          Expand Tree: false
+          Link Tree Style: Links in Alphabetic Order
+          axis_triad_body:
+            Alpha: 1
+            Show Axes: false
+            Show Trail: false
+            Value: true
+          base:
+            Alpha: 1
+            Show Axes: false
+            Show Trail: false
+            Value: true
+          flange:
+            Alpha: 1
+            Show Axes: false
+            Show Trail: false
+          stage1:
+            Alpha: 1
+            Show Axes: false
+            Show Trail: false
+            Value: true
+          stage2:
+            Alpha: 1
+            Show Axes: false
+            Show Trail: false
+            Value: true
+          stage3:
+            Alpha: 1
+            Show Axes: false
+            Show Trail: false
+            Value: true
+          stage4:
+            Alpha: 1
+            Show Axes: false
+            Show Trail: false
+            Value: true
+          stage5:
+            Alpha: 1
+            Show Axes: false
+            Show Trail: false
+            Value: true
+          stage6:
+            Alpha: 1
+            Show Axes: false
+            Show Trail: false
+            Value: true
+          tcp:
+            Alpha: 1
+            Show Axes: false
+            Show Trail: false
         Robot Alpha: 0.5
         Show Robot Collision: false
         Show Robot Visual: false
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Filter (blacklist): ""
+      Filter (whitelist): ""
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+        base:
+          Value: true
+        flange:
+          Value: true
+        stage1:
+          Value: true
+        stage2:
+          Value: true
+        stage3:
+          Value: true
+        stage4:
+          Value: true
+        stage5:
+          Value: true
+        stage6:
+          Value: true
+        tcp:
+          Value: true
+      Marker Scale: 0.699999988079071
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: false
+      Tree:
+        base:
+          stage1:
+            stage2:
+              stage3:
+                stage4:
+                  stage5:
+                    stage6:
+                      flange:
+                        tcp:
+                          {}
+      Update Interval: 0
       Value: true
   Enabled: true
   Global Options:
@@ -158,7 +309,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 2.6672070026397705
+      Distance: 2.347142219543457
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -186,9 +337,11 @@ Window Geometry:
     collapsed: false
   Hide Left Dock: false
   Hide Right Dock: false
-  QMainWindow State: 000000ff00000000fd0000000100000000000002b400000379fc0200000005fb00000044004d006f00740069006f006e0050006c0061006e006e0069006e00670020002d0020005400720061006a006500630074006f0072007900200053006c00690064006500720000000000ffffffff0000003f00fffffffb000000100044006900730070006c006100790073000000003b00000220000000c700fffffffb0000001c004d006f00740069006f006e0050006c0061006e006e0069006e00670000000166000001910000016900fffffffb0000000800480065006c0070000000029a0000006e0000006e00fffffffb0000000a00560069006500770073000000003b00000379000000a000ffffff000004b00000037900000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  Planned Path - Trajectory Slider:
+    collapsed: false
+  QMainWindow State: 000000ff00000000fd0000000100000000000002b400000379fc0200000006fb00000044004d006f00740069006f006e0050006c0061006e006e0069006e00670020002d0020005400720061006a006500630074006f0072007900200053006c00690064006500720000000000ffffffff0000000000000000fb000000100044006900730070006c006100790073000000003b00000379000000c700fffffffb0000001c004d006f00740069006f006e0050006c0061006e006e0069006e00670000000166000001910000000000000000fb0000000800480065006c0070000000029a0000006e0000006e00fffffffb0000000a00560069006500770073000000003b00000379000000a000fffffffb000000400050006c0061006e006e00650064002000500061007400680020002d0020005400720061006a006500630074006f0072007900200053006c00690064006500720000000000ffffffff0000003f00ffffff000004b00000037900000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Views:
     collapsed: false
   Width: 1200
-  X: 2019
-  Y: 81
+  X: 2037
+  Y: 115
