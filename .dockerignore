@@ -1,4 +1,7 @@
-.git
-build
-install
-log
+# Only src/ is needed; this also drops build/, install/, log/, .git/, .vscode/, .devcontainer/
+*
+!src
+**/.git
+**/__pycache__
+**/.pytest_cache
+**/*.egg-info
