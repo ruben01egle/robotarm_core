@@ -1,22 +1,24 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame
 
 from utility.RequestActionClient import RequestActionClient
+from robotarm_interface.msg import RobotarmMode
 from robotarm_interface.srv import RequestAction
 
-from .controller_modes import GC_CONTROLLER, IMPEDANCE_CONTROLLER, set_available
+from .controller_modes import mode_available
 
 HAND_GUIDING = "hand_guiding"
 COMPLIANT_HOLD = "compliant_hold"
 
-# (title, description, controller set)
+# (title, description, firmware mode)
 MODES = {
     HAND_GUIDING: ("Hand guiding",
                    "Arm floats, move it by hand, stays where it is left.",
-                   [GC_CONTROLLER]),
+                   RobotarmMode.GRAVITY_COMP),
     COMPLIANT_HOLD: ("Compliant hold",
                      "TCP held at the activation pose by a virtual spring.",
-                     [IMPEDANCE_CONTROLLER]),
+                     RobotarmMode.IMPEDANCE),
 }
+FIRMWARE_MODES = {fw_mode: mode for mode, (_, _, fw_mode) in MODES.items()}
 
 
 class ComplianceWidget(QWidget):
@@ -111,14 +113,14 @@ class ComplianceWidget(QWidget):
             request_type=req_type,
             user_cb=cb,
             node_name=self.name,
-            controller_names=MODES[mode][2])
+            mode=MODES[mode][2])
 
     def update_ui_lock_state(self):
         for mode, btn in self.buttons.items():
             active = self.active_mode == mode
             btn.setChecked(active)
-            # Only one mode at a time; grey out controllers that are not loaded
-            btn.setEnabled(active or (self.active_mode is None and self.available[mode]))
+            # Only one mode at a time; grey out modes the firmware can't switch to now (incl. while switching)
+            btn.setEnabled(self.available[mode] and (active or self.active_mode is None))
             if active:
                 btn.setText("DISABLE")
                 btn.setStyleSheet("background-color: #e74c3c; color: white; font-weight: bold;")
@@ -149,8 +151,8 @@ class ComplianceWidget(QWidget):
 
     def update_widget(self):
         """Called periodically by the main GUI timer (~30 Hz)."""
-        loaded = self.store.get_loaded_controllers()
-        available = {mode: set_available(controllers, loaded) for mode, (_, _, controllers) in MODES.items()}
+        modes = self.store.get_available_modes()
+        available = {mode: mode_available(fw_mode, modes) for mode, (_, _, fw_mode) in MODES.items()}
         if available != self.available:
             self.available = available
             self.update_ui_lock_state()
@@ -158,5 +160,7 @@ class ComplianceWidget(QWidget):
         status = self.store.get_status()
         mode = None
         if status["active_node"] == self.name:
-            mode = HAND_GUIDING if GC_CONTROLLER in self.store.get_active_controller_list() else COMPLIANT_HOLD
+            # The firmware mode changes before /system_status (10 Hz) reports the end of the mission:
+            # in between (ARMED, STOPPED, switching) keep the card, the mission end follows
+            mode = FIRMWARE_MODES.get(status["mode"], self.active_mode)
         self.set_active_mode(mode, status["state"])

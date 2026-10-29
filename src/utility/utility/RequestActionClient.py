@@ -6,7 +6,7 @@ class RequestActionClient:
         self.node = node
         self.client = self.node.create_client(RequestAction, 'request_action')
 
-    def send_request(self, action_id, request_type, user_cb=None, node_name="", controller_names=None, blocking=False):
+    def send_request(self, action_id, request_type, user_cb=None, node_name="", mode=None, blocking=False):
         if not self.client.wait_for_service(timeout_sec=1.0):
             self.node.get_logger().error('Service not available')
             return False if blocking else None
@@ -18,7 +18,8 @@ class RequestActionClient:
             request.node_name = self.node.get_name()
         request.action_id = action_id
         request.request_type = request_type
-        request.controller_names = list(controller_names) if controller_names else []
+        if mode is not None:
+            request.mode.mode = mode
 
         if blocking:
             # --- SYNCHRONER MODUS ---

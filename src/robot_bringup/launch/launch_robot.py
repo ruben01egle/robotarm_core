@@ -67,9 +67,6 @@ def generate_launch_description():
             executable='control_center_node',
             name='control_center',
             output='screen',
-            parameters=[{
-                'hardware_component_name': 'moteus_hardware_system'
-            }]
         ),
 
         Node(

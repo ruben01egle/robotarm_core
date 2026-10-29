@@ -1,26 +1,18 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
-from rclpy.qos import QoSProfile
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from rclpy.callback_groups import ReentrantCallbackGroup
 from sensor_msgs.msg import JointState
 
-from controller_manager_msgs.srv import ListHardwareInterfaces
-from controller_manager_msgs.srv import ListControllers
-from controller_manager_msgs.srv import SwitchController
-from controller_manager_msgs.srv import SwitchController_Request as SwitchReq
-from controller_manager_msgs.srv import SetHardwareComponentState
-from lifecycle_msgs.msg import State as LifecycleState
-
 from transitions import Machine
+from contextlib import nullcontext
 from enum import Enum
+import threading
 import time
 
-from robotarm_interface.srv import RequestAction
-from robotarm_interface.msg import SystemStatus
-
-from .switching import (FEEDFORWARD_CONTROLLER, FEEDFORWARD_UPSTREAMS, switch_request,
-                        with_feedforward)
+from robotarm_interface.srv import RequestAction, SetMode
+from robotarm_interface.msg import SystemStatus, RobotarmMode, ModeState
 
 # Values are the SystemStatus.msg constants, so the state is published without conversion
 class SystemState(Enum):
@@ -33,28 +25,40 @@ class SystemState(Enum):
         ERROR           = SystemStatus.ERROR
         EMERGENCY       = SystemStatus.EMERGENCY
 
+# Modes a mission may run in. LIMP, ARMED and STOPPED are reached through arm/disarm, mission end
+# and stop; EMERGENCY_OFF only through the emergency.
+MISSION_MODES = {
+    RobotarmMode.JOINT_STREAM, RobotarmMode.CARTESIAN_JOG, RobotarmMode.TRAJECTORY,
+    RobotarmMode.GRAVITY_COMP, RobotarmMode.IMPEDANCE, RobotarmMode.IMPEDANCE_JOINT_STREAM,
+    RobotarmMode.IMPEDANCE_JOG,
+}
+
+# Firmware modes in which no controller moves the arm: STOP and ERROR leave them as they are
+# (requesting STOPPED from LIMP would power the drives)
+AT_REST_MODES = {
+    RobotarmMode.LIMP, RobotarmMode.STOPPED, RobotarmMode.FAULT, RobotarmMode.EMERGENCY_OFF,
+    RobotarmMode.UNKNOWN,
+}
+
+# Retry time for STOPPED and EMERGENCY_OFF, which must not fail because of a running switch
+SAFETY_RETRY_TIMEOUT = 2.0
+
+MODE_NAMES = {
+    getattr(RobotarmMode, name): name
+    for name in dir(RobotarmMode) if name.isupper() and isinstance(getattr(RobotarmMode, name), int)
+}
+
+
+def mode_name(mode):
+    return MODE_NAMES.get(mode, str(mode))
+
+
 class ControlCenterNode(Node):
 
     state: SystemState
 
     def __init__(self):
         super().__init__('control_center_node')
-
-        self.declare_parameter('hardware_component_name', 'test') 
-        # self.declare_parameter('hold_position_controller_name', 'my_hold_position_controller')
-
-        self.hardware_name = self.get_parameter('hardware_component_name').get_parameter_value().string_value
-        # self.hold_controller_name = self.get_parameter('hold_position_controller_name').get_parameter_value().string_value
-
-        self.get_logger().info(f"Loaded Hardware Component Name: '{self.hardware_name}'")
-
-        # The position-controlled controllers are chained onto the feedforward controller;
-        # control_center switches it together with them (see switching.py)
-        self.declare_parameter('feedforward_controller', FEEDFORWARD_CONTROLLER)
-        self.declare_parameter('feedforward_upstreams', list(FEEDFORWARD_UPSTREAMS))
-        self.ff_controller = self.get_parameter('feedforward_controller').value
-        self.ff_upstreams = tuple(self.get_parameter('feedforward_upstreams').value)
-        # self.get_logger().info(f"Loaded Hold-Position Controller: '{self.hold_controller_name}'")
 
         states = [
             {
@@ -86,14 +90,14 @@ class ControlCenterNode(Node):
             {'trigger': 'enter_config',       'source': SystemState.CONNECTED, 'dest': SystemState.CONFIG},
             {'trigger': 'exit_config',        'source': SystemState.CONFIG,    'dest': SystemState.CONNECTED},
             {'trigger': 'enter_arm',          'source': SystemState.CONNECTED, 'dest': SystemState.ARMED,       'before': 'on_enter_arm_before'},
-            {'trigger': 'exit_arm',           'source': SystemState.ARMED,     'dest': SystemState.CONNECTED,   'after': 'on_exit_arm_after'},
+            {'trigger': 'exit_arm',           'source': [SystemState.ARMED, SystemState.STOP], 'dest': SystemState.CONNECTED, 'before': 'on_exit_arm_before'},
             {'trigger': 'enter_mission',      'source': SystemState.ARMED,     'dest': SystemState.MISSION,     'before': 'on_enter_mission_before'},
             {'trigger': 'exit_mission',       'source': SystemState.MISSION,   'dest': SystemState.ARMED,       'before': 'on_exit_mission_before'},
-            {'trigger': 'controller_lost',    'source': SystemState.MISSION,   'dest': SystemState.ARMED,       'before': 'on_controller_lost_before'},
+            {'trigger': 'controller_lost',    'source': SystemState.MISSION,   'dest': SystemState.STOP,        'before': 'on_controller_lost_before'},
 
             # --- STOPS & Recovery ---
             {'trigger': 'enter_stop',         'source': SystemState.MISSION,   'dest': SystemState.STOP},
-            {'trigger': 'exit_stop',          'source': SystemState.STOP,      'dest': SystemState.ARMED},
+            {'trigger': 'exit_stop',          'source': SystemState.STOP,      'dest': SystemState.ARMED,       'before': 'on_exit_stop_before'},
 
             # --- Global Error ---
             {'trigger': 'enter_error',     'source': '*', 'dest': SystemState.ERROR},
@@ -106,24 +110,23 @@ class ControlCenterNode(Node):
 
         self.multithread_cb_group = ReentrantCallbackGroup()      
 
-        self.cm_client = self.create_client(
-            ListHardwareInterfaces, 
-            '/controller_manager/list_hardware_interfaces', 
+        # The firmware mode manager does all controller and hardware switching
+        self.set_mode_client = self.create_client(
+            SetMode,
+            '/mode_manager/set_mode',
             callback_group=self.multithread_cb_group
         )
-        self.switch_ctrl_client = self.create_client(
-            SwitchController, 
-            '/controller_manager/switch_controller', 
-            callback_group=self.multithread_cb_group
-        )
-        self.hw_state_client = self.create_client(
-            SetHardwareComponentState,
-            '/controller_manager/set_hardware_component_state',
-            callback_group=self.multithread_cb_group
-        )
-        self.list_ctrl_client = self.create_client(
-            ListControllers,
-            '/controller_manager/list_controllers',
+        # The firmware rejects a request while another one is running (except EMERGENCY_OFF)
+        self.set_mode_lock = threading.Lock()
+
+        # Actual mode of the firmware, latched: reliable + transient local to get it on connect
+        self.mode_state = None
+        self.mode_state_sub = self.create_subscription(
+            ModeState,
+            '/mode_manager/state',
+            self.mode_state_cb,
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                       durability=DurabilityPolicy.TRANSIENT_LOCAL),
             callback_group=self.multithread_cb_group
         )
 
@@ -149,20 +152,14 @@ class ControlCenterNode(Node):
             callback_group=self.multithread_cb_group
         )
 
-        # Controller set of the mission, (de)activated in a single switch request,
-        # e.g. [cartesian_impedance_controller, joint_stream_controller_impedance] when chained
-        self.active_controllers = []
+        # Mode of the running mission (RobotarmMode value), None = no mission
+        self.active_mode = None
         self.active_node = None
 
-        # Controller monitoring: detects when the controller_manager deactivates a mission controller
-        # on its own (e.g. after an error in the controller)
-        self.switching_controller = False
-        self.controller_check_pending = False
-        self.controller_monitor_timer = self.create_timer(
-            0.2,
-            self.controller_monitor_cb,
-            callback_group=self.multithread_cb_group
-        )
+        # Mission monitoring on /mode_manager/state: detects when the firmware leaves the mission
+        # mode on its own (e.g. after a controller error it goes to STOPPED)
+        self.switching_mode = False
+        self.mission_mode_seen = False
 
         self.status_pub = self.create_publisher(
             SystemStatus,
@@ -182,9 +179,9 @@ class ControlCenterNode(Node):
     def check_hardware_connection(self):
         if self.state != SystemState.IDLE:
             return
-        self.get_logger().info("Checking for hw")
-        if self.cm_client.service_is_ready():
-            self.get_logger().info("Detected hardware")
+        self.get_logger().info("Checking for firmware mode manager")
+        if self.mode_state is not None and self.mode_state.mode.mode != RobotarmMode.UNKNOWN:
+            self.get_logger().info(f"Detected firmware, mode {mode_name(self.mode_state.mode.mode)}")
             self.startup_timer.cancel()
             self.enter_connect() # type: ignore
 
@@ -217,205 +214,149 @@ class ControlCenterNode(Node):
     def joint_state_callback(self, msg):
         self.last_heartbeat_time = time.time()
 
+    def mode_state_cb(self, msg: ModeState):
+        self.mode_state = msg
+        mode = msg.mode.mode
+
+        # Someone else requested EMERGENCY_OFF: the hardware is finalized anyway
+        if mode == RobotarmMode.EMERGENCY_OFF and self.state != SystemState.EMERGENCY:
+            self.get_logger().fatal("Firmware reports EMERGENCY_OFF")
+            self.enter_emergency() # type: ignore
+            return
+
+        if self.state != SystemState.MISSION or self.active_mode is None:
+            return
+        if self.switching_mode or msg.switching:
+            return
+        if mode == self.active_mode:
+            self.mission_mode_seen = True
+        # Before the mission mode has been seen, an ARMED may still be the stale state from
+        # before the switch. Any other mode means the mission was left (e.g. FAULT, STOPPED).
+        elif self.mission_mode_seen or mode != RobotarmMode.ARMED:
+            self.controller_lost(mode=mode) # type: ignore
+
+    def set_mode(self, target, retry_timeout=0.0):
+        """
+        Request a mode from the firmware mode manager and wait for the result.
+
+        Rejected requests are repeated until retry_timeout. Raises RuntimeError on failure.
+        """
+        if not self.set_mode_client.wait_for_service(timeout_sec=1.0):
+            raise RuntimeError("Service '/mode_manager/set_mode' not active!")
+        request = SetMode.Request()
+        request.target.mode = target
+
+        # EMERGENCY_OFF is never rejected by the firmware, it aborts a running request
+        emergency = target == RobotarmMode.EMERGENCY_OFF
+        deadline = time.time() + retry_timeout
+        with nullcontext() if emergency else self.set_mode_lock:
+            if not emergency:
+                self.switching_mode = True
+            try:
+                rate = self.create_rate(10)
+                try:
+                    while True:
+                        future = self.set_mode_client.call_async(request)
+                        while not future.done(): rate.sleep()
+                        response = future.result()
+                        if response is not None and response.success:
+                            break
+                        reason = response.message if response is not None else "no response"
+                        if time.time() >= deadline:
+                            actual = mode_name(response.mode.mode) if response is not None else "unknown"
+                            raise RuntimeError(f"Mode {mode_name(target)} rejected: {reason} (mode is {actual})")
+                        self.get_logger().warn(f"Mode {mode_name(target)} rejected ({reason}), retrying...")
+                        rate.sleep()
+                finally:
+                    self.destroy_rate(rate)
+            finally:
+                if not emergency:
+                    self.switching_mode = False
+        self.get_logger().info(f"Firmware mode {mode_name(target)}")
+
+    def stop_motion(self):
+        """Switch the firmware to STOPPED if a controller moves the arm. Never raises."""
+        mode = self.mode_state.mode.mode if self.mode_state is not None else RobotarmMode.UNKNOWN
+        if mode in AT_REST_MODES:
+            self.get_logger().info(f"Firmware is {mode_name(mode)}. System is already stationary.")
+        else:
+            self.get_logger().info(f"Safety stop: requesting STOPPED (firmware was {mode_name(mode)})...")
+            try:
+                self.set_mode(RobotarmMode.STOPPED, retry_timeout=SAFETY_RETRY_TIMEOUT)
+            except Exception as e:
+                self.get_logger().error(f"Failed to stop: {e}")
+        self.active_node = None
+        self.active_mode = None
+
     def on_enter_arm_before(self, event_data=None):
-        if not self.hw_state_client.wait_for_service(timeout_sec=1.0):
-            raise RuntimeError("Service 'set_hardware_component_state' not active!")
-        request = SetHardwareComponentState.Request()
-        request.name = self.hardware_name
-        request.target_state.id = LifecycleState.PRIMARY_STATE_ACTIVE
+        # On failure the firmware returns to LIMP
+        self.set_mode(RobotarmMode.ARMED)
+        self.get_logger().info("Robot armed")
 
-        rate = self.create_rate(10)
-        future = self.hw_state_client.call_async(request)
-        while not future.done(): rate.sleep()
-        response = future.result()
-        if response is None or not response.ok:
-            raise RuntimeError(f"Failed to arm hardware.")
-            
-        self.get_logger().info("Hardware-Interface armed")
-
-    def on_exit_arm_after(self, event_data=None):
-        if not self.hw_state_client.wait_for_service(timeout_sec=1.0):
-            raise RuntimeError("Service 'set_hardware_component_state' not active!")
-        request = SetHardwareComponentState.Request()
-        request.name = self.hardware_name
-        request.target_state.id = LifecycleState.PRIMARY_STATE_INACTIVE
-
-        rate = self.create_rate(10)
-        future = self.hw_state_client.call_async(request)
-        while not future.done(): rate.sleep()
-        response = future.result()
-        if response is None or not response.ok:
-            raise RuntimeError(f"Failed to disarm hardware.")
-            
-        self.get_logger().info("Hardware-Interface disarmed")
+    def on_exit_arm_before(self, event_data=None):
+        self.set_mode(RobotarmMode.LIMP)
+        self.active_node = None
+        self.active_mode = None
+        self.get_logger().info("Robot disarmed")
 
     def on_enter_mission_before(self, event_data):
         node_name = event_data.kwargs.get('node_name', 'unknown_node')
-        requested = list(event_data.kwargs.get('controller_names', []))
+        mode = event_data.kwargs.get('mode')
 
-        if not requested:
-            raise RuntimeError(f"Rejected: node '{node_name}' requested a mission without controllers.")
+        if mode not in MISSION_MODES:
+            raise RuntimeError(f"Rejected: node '{node_name}' requested a mission in mode {mode_name(mode)}.")
 
-        # Position-controlled controllers only run together with the feedforward controller
-        controller_names = with_feedforward(requested, self.ff_controller, self.ff_upstreams)
-        if self.ff_controller in controller_names and self.ff_controller not in requested:
-            self.check_loaded(self.ff_controller, needed_for=requested)
+        self.get_logger().info(f"Preparing mission for node '{node_name}' in mode {mode_name(mode)}...")
+        self.mission_mode_seen = False
+        self.set_mode(mode)
 
-        self.get_logger().info(f"Preparing mission for node '{node_name}'. Activating controllers {controller_names}...")
-
-        if not self.switch_ctrl_client.wait_for_service(timeout_sec=1.0):
-            raise RuntimeError("Service '/controller_manager/switch_controller' not active!")
-
-        # All controllers of the set in ONE request (STRICT: all or nothing), downstream first
-        request = SwitchController.Request()
-        request.activate_controllers, request.deactivate_controllers = \
-            switch_request(self.active_controllers, controller_names)
-        request.strictness = SwitchReq.STRICT
-        request.activate_asap = True
-
-        self.switching_controller = True
-        try:
-            rate = self.create_rate(10)
-            future = self.switch_ctrl_client.call_async(request)
-            while not future.done():
-                rate.sleep()
-
-            response = future.result()
-            if response is None or not response.ok:
-                raise RuntimeError(f"Failed to activate controllers: {controller_names}")
-
-            self.active_node = node_name
-            self.active_controllers = controller_names
-        finally:
-            self.switching_controller = False
-        self.get_logger().info(f"Successfully activated controllers {controller_names} for mission.")
+        self.active_node = node_name
+        self.active_mode = mode
+        self.get_logger().info(f"Mission of '{node_name}' running in mode {mode_name(mode)}.")
 
     def on_exit_mission_before(self, event_data):
         node_name = event_data.kwargs.get('node_name', 'unknown_node')
         
         if self.active_node != node_name:
             raise RuntimeError(f"Rejected: active node is {self.active_node}. You ({node_name}) cannot stop this mission.")
-            
-        if self.active_controllers:
-            self.get_logger().info(f"Stopping active mission controllers {self.active_controllers}...")
-            
-            if not self.switch_ctrl_client.wait_for_service(timeout_sec=1.0):
-                raise RuntimeError("Service '/controller_manager/switch_controller' not active!")
 
-            # Whole set in one request: chaining does not allow deactivating the downstream controller alone
-            request = SwitchController.Request()
-            request.activate_controllers, request.deactivate_controllers = \
-                switch_request(self.active_controllers, [])
-            request.strictness = SwitchReq.STRICT
-
-            self.switching_controller = True
-            try:
-                rate = self.create_rate(20)
-                future = self.switch_ctrl_client.call_async(request)
-                while not future.done():
-                    rate.sleep()
-
-                response = future.result()
-                if response is None or not response.ok:
-                    raise RuntimeError(f"Failed to deactivate controllers: {self.active_controllers}")
-
-                # Reset while the flag is still set, so the monitor does not raise a false alarm
-                self.active_controllers = []
-            finally:
-                self.switching_controller = False
+        self.get_logger().info(f"Stopping mission ({mode_name(self.active_mode)})...")
+        self.set_mode(RobotarmMode.ARMED)
 
         self.active_node = None
-        self.active_controllers = []
-        self.get_logger().info("Mission controllers successfully stopped.")
-
-    def check_loaded(self, controller, needed_for):
-        """Raise RuntimeError unless controller is loaded in the controller_manager."""
-        if not self.list_ctrl_client.wait_for_service(timeout_sec=1.0):
-            raise RuntimeError("Service '/controller_manager/list_controllers' not active!")
-        rate = self.create_rate(20)
-        future = self.list_ctrl_client.call_async(ListControllers.Request())
-        while not future.done():
-            rate.sleep()
-        response = future.result()
-        if response is None or controller not in [c.name for c in response.controller]:
-            raise RuntimeError(f"Rejected: {controller} is not loaded on the controller_manager "
-                               f"(needed for {', '.join(needed_for)}).")
-
-    def controller_monitor_cb(self):
-        """Check periodically whether all controllers of the mission are still active."""
-        if self.state != SystemState.MISSION or not self.active_controllers:
-            return
-        if self.switching_controller or self.controller_check_pending:
-            return
-        if not self.list_ctrl_client.service_is_ready():
-            return
-
-        self.controller_check_pending = True
-        expected_controllers = list(self.active_controllers)
-        future = self.list_ctrl_client.call_async(ListControllers.Request())
-        future.add_done_callback(lambda f: self.controller_monitor_response_cb(f, expected_controllers))
-
-    def controller_monitor_response_cb(self, future, expected_controllers):
-        try:
-            response = future.result()
-            if response is None:
-                return
-
-            # The state may have changed during the query (e.g. a regular disengage)
-            if (self.state != SystemState.MISSION or self.switching_controller
-                    or self.active_controllers != expected_controllers):
-                return
-
-            states = {ctrl.name: ctrl.state for ctrl in response.controller}
-            lost = {name: states.get(name, "not loaded") for name in expected_controllers
-                    if states.get(name) != "active"}
-
-            if lost:
-                still_active = [name for name in expected_controllers if name not in lost]
-                self.controller_lost(lost=lost, still_active=still_active) # type: ignore
-        except Exception as e:
-            self.get_logger().error(f"Controller monitor failed: {e}", throttle_duration_sec=2.0)
-        finally:
-            self.controller_check_pending = False
+        self.active_mode = None
+        self.get_logger().info("Mission successfully stopped.")
 
     def on_controller_lost_before(self, event_data):
-        lost = event_data.kwargs.get('lost', {})
-        still_active = event_data.kwargs.get('still_active', [])
-        lost_text = ", ".join(f"'{name}' ({state})" for name, state in lost.items())
+        mode = event_data.kwargs.get('mode')
         self.get_logger().error(
-            f"Controller {lost_text} left active state unexpectedly. "
+            f"Firmware left mission mode {mode_name(self.active_mode)} unexpectedly (now {mode_name(mode)}). "
             f"Mission of '{self.active_node}' aborted. See controller_manager log for reason.")
-
-        # Deactivate the rest of the set too, so the result is always a defined state (ARMED, drives hold)
-        if still_active:
-            self.active_controllers = still_active
-            self.deactivate_active_controller()
-
+        # Nothing to request: after a controller error the firmware cleans up to STOPPED itself.
+        # Resuming (ARMED) or disarming (LIMP) is the operator's decision.
         self.active_node = None
-        self.active_controllers = []
+        self.active_mode = None
 
     def on_enter_stop(self, event_data=None):
-        self.get_logger().warn("STOP INVOKED: Deactivating all active controllers for safety...")
-        self.deactivate_active_controller()
+        if event_data is not None and event_data.event.name == 'controller_lost':
+            return
+        self.get_logger().warn("STOP INVOKED: Stopping all motion for safety...")
+        self.stop_motion()
+
+    def on_exit_stop_before(self, event_data=None):
+        # The drives held on their own PID; with the feedforward back, the arm may lift slightly
+        self.set_mode(RobotarmMode.ARMED)
+        self.get_logger().info("Resumed, robot armed")
 
     def on_enter_error(self, event_data=None):
-        self.get_logger().fatal("ERROR STATE INVOKED: Hard-stopping robot by dropping controllers...")
-        self.deactivate_active_controller()
+        self.get_logger().fatal("ERROR STATE INVOKED: Hard-stopping robot by stopping all motion...")
+        self.stop_motion()
 
     def on_enter_emergency(self, event_data=None):
         self.get_logger().fatal("EMERGENCY STATE INVOKED")
-        if not self.hw_state_client.wait_for_service(timeout_sec=1.0):
-            raise RuntimeError("Service 'set_hardware_component_state' not active!")
-        request = SetHardwareComponentState.Request()
-        request.name = self.hardware_name
-        request.target_state.id = LifecycleState.PRIMARY_STATE_FINALIZED
-
-        rate = self.create_rate(10)
-        future = self.hw_state_client.call_async(request)
-        while not future.done(): rate.sleep()
-        response = future.result()
-        if response is None or not response.ok:
-            raise RuntimeError(f"Failed to deactivate hardware")
+        self.active_node = None
+        self.active_mode = None
+        self.set_mode(RobotarmMode.EMERGENCY_OFF, retry_timeout=SAFETY_RETRY_TIMEOUT)
 
     def request_action_cb(self, request: RequestAction.Request, response: RequestAction.Response):
         action_map = {
@@ -446,7 +387,7 @@ class ControlCenterNode(Node):
 
         try:
             if (request.action_id == RequestAction.Request.ACTION_MISSION):
-                getattr(self, trigger_fctn)(node_name=request.node_name, controller_names=list(request.controller_names))
+                getattr(self, trigger_fctn)(node_name=request.node_name, mode=request.mode.mode)
             else:
                 getattr(self, trigger_fctn)()
 
@@ -466,10 +407,11 @@ class ControlCenterNode(Node):
             msg.state = self.state.value
             
             msg.connected = self.state != SystemState.IDLE and self.state != SystemState.ERROR
-            msg.armed = self.state in [SystemState.ARMED, SystemState.MISSION]
+            # STOP is powered too (drives hold), disarming is possible from there
+            msg.armed = self.state in [SystemState.ARMED, SystemState.MISSION, SystemState.STOP]
             msg.stopped = self.state in [SystemState.STOP]
             
-            msg.active_controllers = list(self.active_controllers)
+            msg.mode.mode = self.mode_state.mode.mode if self.mode_state is not None else RobotarmMode.UNKNOWN
             msg.active_node = self.active_node if self.active_node else ""
 
             self.status_pub.publish(msg)
@@ -477,71 +419,27 @@ class ControlCenterNode(Node):
         except Exception as e:
             self.get_logger().error(f"Error publishing system state: {e}", throttle_duration_sec=2.0)
 
-    def deactivate_active_controller(self, blocking=False):
-        """Helper method to turn off the currently running controller set immediately."""
-        if not self.active_controllers:
-            self.get_logger().info("No active controller running. System is already stationary.")
-            return
-
-        self.get_logger().info(f"Safety shutdown: Deactivating controllers {self.active_controllers}...")
-
-        if not self.switch_ctrl_client.service_is_ready():
-            self.get_logger().error("Service '/controller_manager/switch_controller' not ready!")
-            return
-
-        request = SwitchController.Request()
-        request.activate_controllers, request.deactivate_controllers = \
-            switch_request(self.active_controllers, [])
-        request.strictness = SwitchReq.BEST_EFFORT
-
-        try:
-            if blocking:
-                response = self.switch_ctrl_client.call(request)
-                if response is None or not response.ok:
-                    self.get_logger().error(f"Failed to deactivate controllers {self.active_controllers}!")
-                else:
-                    self.get_logger().info(f"Successfully deactivated controllers {self.active_controllers}.")
-            else:
-                rate = self.create_rate(20)
-                future = self.switch_ctrl_client.call_async(request)
-                while not future.done(): 
-                    rate.sleep()
-                    
-                response = future.result()
-                if response is None or not response.ok:
-                    self.get_logger().error(f"Failed to deactivate controllers {self.active_controllers}!")
-                else:
-                    self.get_logger().info(f"Successfully deactivated controllers {self.active_controllers}. Hardware stopped.")
-                
-        except Exception as e:
-            self.get_logger().error(f"Exception during safety controller switch: {e}")
-
-        self.active_node = None
-        self.active_controllers = []
-
     def perform_cleanup(self):
         """
         Safely secures the robot hardware on node shutdown, BUT ONLY if it was
-        running or armed. Prevents bypassing EMERGENCY (FINALIZED) or ERROR states.
+        running or armed. Prevents bypassing EMERGENCY (EMERGENCY_OFF) or ERROR states.
         """
         if self.state in [SystemState.IDLE, SystemState.ERROR, SystemState.EMERGENCY]:
             self.get_logger().info(f"Shutdown: System already in safe state ({self.state.name}). Skipping cleanup.")
             return
 
         self.get_logger().warn(f"Unexpected shutdown from state {self.state.name}! Securing hardware...")
-        
-        self.deactivate_active_controller(blocking=True)
 
         try:
-            if self.hw_state_client.service_is_ready():
-                self.get_logger().info(f"Setting hardware '{self.hardware_name}' to INACTIVE...")
-                request = SetHardwareComponentState.Request()
-                request.name = self.hardware_name
-                request.target_state.id = LifecycleState.PRIMARY_STATE_INACTIVE
-                self.hw_state_client.call(request)
-                self.get_logger().info("Hardware successfully set to INACTIVE.")
+            if self.set_mode_client.service_is_ready():
+                self.get_logger().info("Requesting LIMP...")
+                request = SetMode.Request()
+                request.target.mode = RobotarmMode.LIMP
+                future = self.set_mode_client.call_async(request)
+                rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
+                self.get_logger().info("Robot set to LIMP.")
         except Exception as e:
-            print(f"[Shutdown Cleanup] Failed to deactivate hardware: {e}")
+            print(f"[Shutdown Cleanup] Failed to disarm: {e}")
 
 def main(args=None):
     rclpy.init(args=args)

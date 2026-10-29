@@ -62,7 +62,7 @@ def launch_setup(context):
         arguments=['joint_state_broadcaster', '--controller-manager', '/controller_manager'],
     )
 
-    # Spawned active here. On the real robot it is spawned inactive and activated by control_center.
+    # Spawned active here. On the real robot it is active only in the firmware's TRAJECTORY mode.
     joint_trajectory_controller_spawner = Node(
         package='controller_manager',
         executable='spawner',

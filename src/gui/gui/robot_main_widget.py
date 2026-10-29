@@ -247,7 +247,7 @@ class RobotMainWindow(QMainWindow):
             if answer != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
-        # Safety: send a zero twist, the Cartesian controller has no timeout (yet)
+        # Safety: send a zero twist now instead of waiting for the controller's 250 ms watchdog
         self.cartesian_page.shutdown()
         super().closeEvent(event)
 

@@ -1,15 +1,27 @@
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton, QButtonGroup
 from PyQt6.QtCore import pyqtSignal
 
+from robotarm_interface.msg import RobotarmMode
+
 # Execution: position controlled directly on the hardware, or compliant through the impedance controller
 POSITION = "position"
 COMPLIANT = "compliant"
 
-IMPEDANCE_CONTROLLER = "cartesian_impedance_controller"
-GC_CONTROLLER = "gc_controller"
+# The firmware mode manager switches the controllers; the GUI only requests modes.
+JOINT_STREAM_MODES = {
+    POSITION: RobotarmMode.JOINT_STREAM,
+    COMPLIANT: RobotarmMode.IMPEDANCE_JOINT_STREAM,
+}
+CARTESIAN_JOG_MODES = {
+    POSITION: RobotarmMode.CARTESIAN_JOG,
+    COMPLIANT: RobotarmMode.IMPEDANCE_JOG,
+}
+# Modes in which the cartesian_impedance_controller runs (its stiffness applies)
+IMPEDANCE_MODES = {RobotarmMode.IMPEDANCE, RobotarmMode.IMPEDANCE_JOINT_STREAM,
+                   RobotarmMode.IMPEDANCE_JOG}
 
-# Same controller class; *_impedance is chained onto the cartesian_impedance_controller.
-# Topics and services are relative to the controller name.
+# Command inputs of the modes: topics and services are relative to these names
+IMPEDANCE_CONTROLLER = "cartesian_impedance_controller"
 JOINT_STREAM_CONTROLLERS = {
     POSITION: "joint_stream_controller",
     COMPLIANT: "joint_stream_controller_impedance",
@@ -19,17 +31,20 @@ CARTESIAN_JOG_CONTROLLERS = {
     COMPLIANT: "cartesian_jog_controller_impedance",
 }
 
+MODE_NAMES = {
+    getattr(RobotarmMode, name): name
+    for name in dir(RobotarmMode)
+    if name.isupper() and isinstance(getattr(RobotarmMode, name), int)
+}
 
-def controller_set(instances: dict, mode: str) -> list:
-    """Controllers that are activated together (in one switch request) for the mode."""
-    if mode == COMPLIANT:
-        return [IMPEDANCE_CONTROLLER, instances[COMPLIANT]]
-    return [instances[POSITION]]
+
+def mode_name(mode) -> str:
+    return MODE_NAMES.get(mode, f"UNKNOWN ({mode})")
 
 
-def set_available(names: list, loaded) -> bool:
-    """loaded = None means the controller_manager has not been queried yet: grey out nothing."""
-    return loaded is None or all(name in loaded for name in names)
+def mode_available(mode, available) -> bool:
+    """available = None means the firmware has not reported its state yet."""
+    return available is not None and mode in available
 
 
 class ExecutionToggle(QWidget):
@@ -95,7 +110,7 @@ class ExecutionToggle(QWidget):
         for mode, btn in self.buttons.items():
             btn.setEnabled(not self.locked and self.available[mode])
             btn.setToolTip(self.tooltips[mode] +
-                           ("" if self.available[mode] else "\n(not loaded in the controller_manager)"))
+                           ("" if self.available[mode] else "\n(not available on the firmware)"))
         # Unavailable mode selected (e.g. simulation without position controller): switch
         if not self.locked and not self.available[self.mode()]:
             other = COMPLIANT if self.mode() == POSITION else POSITION

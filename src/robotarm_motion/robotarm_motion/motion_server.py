@@ -8,11 +8,11 @@ a single goal, or the steps of an unsaved program (the GUI's draft). For each jo
    segments and plans ALL of them (plan only) from the current state; if one step cannot be
    planned, nothing moves,
 2. shows the plan in RViz (display_planned_path),
-3. unless plan_only: starts a control_center mission for the joint_trajectory_controller, executes
+3. unless plan_only: starts a control_center mission in the TRAJECTORY mode, executes
    the planned segments one by one through move_group (/execute_trajectory), stops the mission.
 
 Only one job runs at a time; further goals are rejected. A STOP, ERROR, EMERGENCY or lost
-controller during the job aborts it (control_center deactivates the controller, the server cancels
+controller during the job aborts it (the firmware stops the motion, the server cancels
 the running execution). Feedback and result name the steps of the executing or failed segment.
 
 The GUI and the motion command line read and change the goals file only through these services:
@@ -28,7 +28,6 @@ The file is read again for every request, so it can also be edited by hand.
 ROS parameters:
   goals_file          goals file (default $ROS_HOME/robotarm_motion/goals.yaml)
   default_scaling     velocity/acceleration scaling when a job does not set one (default 0.2)
-  controller          trajectory controller (default joint_trajectory_controller)
   arm                 true: arm the hardware if control_center is only CONNECTED (default false)
   teach_max_velocity  [rad/s] teaching is refused while a joint moves faster (default 0.02)
 """
@@ -75,17 +74,14 @@ class MotionServer(Node):
         super().__init__('motion_server')
         self.declare_parameter('goals_file', default_goals_file())
         self.declare_parameter('default_scaling', 0.2)
-        self.declare_parameter('controller', 'joint_trajectory_controller')
         self.declare_parameter('arm', False)
         self.declare_parameter('teach_max_velocity', 0.02)
         param = self.get_parameter
-        self.controller = param('controller').value
 
         self.moveit = MoveItClient(self)
         self.planner = Planner(self, self.moveit)
         # STOP etc. cancel the running MoveIt goal
-        self.mission = ControlCenterMission(self, self.moveit, controllers=[self.controller],
-                                            arm=param('arm').value)
+        self.mission = ControlCenterMission(self, self.moveit, arm=param('arm').value)
         self._busy = threading.Lock()
         self._goals_lock = threading.Lock()   # around every read and write of the goals file
         # (receive time, {joint: position}, max |velocity| or None) of the last STILL_WINDOW
@@ -110,7 +106,7 @@ class MotionServer(Node):
             self.create_service(srv_type, f'~/{name}', callback, callback_group=group)
         self.get_logger().info(
             f'motion_server ready, goals file {param("goals_file").value}, '
-            f'executing on {self.controller}')
+            'executing in the TRAJECTORY mode')
 
     # ----- action callbacks ------------------------------------------------------------------
 

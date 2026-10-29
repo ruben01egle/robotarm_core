@@ -9,8 +9,8 @@ from utility.RequestActionClient import RequestActionClient
 from robotarm_interface.srv import RequestAction
 from robotarm_interface.msg import CartesianIncrement
 
-from .controller_modes import (ExecutionToggle, CARTESIAN_JOG_CONTROLLERS, POSITION, COMPLIANT,
-                               controller_set, set_available)
+from .controller_modes import (ExecutionToggle, CARTESIAN_JOG_CONTROLLERS, CARTESIAN_JOG_MODES, POSITION,
+                               COMPLIANT, mode_available)
 
 # Slider resolution: -SLIDER_RESOLUTION ... +SLIDER_RESOLUTION maps to -v_max ... +v_max
 SLIDER_RESOLUTION = 1000
@@ -70,7 +70,7 @@ class CartesianJogWidget(QWidget):
         self.name = "CartesianJogWidget"
 
         self.request_action_client = RequestActionClient(self.node)
-        # One CartesianJogController instance per mode: same interface under a different name.
+        # Command input of each mode: same CartesianJogController interface under a different name.
         # Twist protocol: send periodically only while jogging (watchdog 250 ms), exactly ONE zero twist
         # on release, nothing while idle. Every twist (zero too) aborts a running increment.
         self.twist_pubs = {
@@ -91,6 +91,7 @@ class CartesianJogWidget(QWidget):
         self.ui_ready = False
         self.movement_enabled = False
         self.disengage_requested = False
+        self.mode_requestable = False   # selected mode in the firmware's available modes
 
         self.sliders = []
         self.target_labels = []
@@ -138,7 +139,7 @@ class CartesianJogWidget(QWidget):
 
         self.main_layout.addLayout(header_layout)
 
-        # Position (cartesian_jog_controller) | Compliant (impedance + cartesian_jog_controller_impedance)
+        # Position (CARTESIAN_JOG) | Compliant (IMPEDANCE_JOG)
         self.execution_toggle = ExecutionToggle()
         self.execution_toggle.mode_changed.connect(lambda _: self.update_limit_labels())
         self.main_layout.addWidget(self.execution_toggle)
@@ -288,7 +289,7 @@ class CartesianJogWidget(QWidget):
         for i, label in enumerate(self.limit_labels):
             label.setText(f"max ±{self.axis_max(i):.3f} {self.AXES[i][4]}" if known else "limits not read yet")
         # No unlocking without limits (the sliders would have no effect)
-        self.btn_toggle_lock.setEnabled(known or self.movement_enabled)
+        self.btn_toggle_lock.setEnabled((known or self.movement_enabled) and self.mode_requestable)
 
     def slider_to_velocity(self, idx, slider_value):
         return slider_value / SLIDER_RESOLUTION * self.axis_max(idx)
@@ -378,7 +379,7 @@ class CartesianJogWidget(QWidget):
             request_type=req_type,
             user_cb=cb,
             node_name=self.name,
-            controller_names=controller_set(CARTESIAN_JOG_CONTROLLERS, self.execution_toggle.mode()))
+            mode=CARTESIAN_JOG_MODES[self.execution_toggle.mode()])
 
     def update_ui_lock_state(self):
         """Enable or disable all inputs according to movement_enabled."""
@@ -428,10 +429,15 @@ class CartesianJogWidget(QWidget):
             self.velocity_limits = limits
             self.update_limit_labels()
 
-        loaded = self.store.get_loaded_controllers()
+        available = self.store.get_available_modes()
         self.execution_toggle.set_available(
-            set_available(controller_set(CARTESIAN_JOG_CONTROLLERS, POSITION), loaded),
-            set_available(controller_set(CARTESIAN_JOG_CONTROLLERS, COMPLIANT), loaded))
+            mode_available(CARTESIAN_JOG_MODES[POSITION], available),
+            mode_available(CARTESIAN_JOG_MODES[COMPLIANT], available))
+        # While moving, the selected mode is the actual one and so available; nothing while switching
+        requestable = mode_available(CARTESIAN_JOG_MODES[self.execution_toggle.mode()], available)
+        if requestable != self.mode_requestable:
+            self.mode_requestable = requestable
+            self.update_limit_labels()
 
         status = self.store.get_status()
         self.set_movement_allowed(status["active_node"] == self.name, status["state"])

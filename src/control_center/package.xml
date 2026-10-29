@@ -8,9 +8,7 @@
   <license>TODO: License declaration</license>
 
   <depend>rclpy</depend>
-  <depend>lifecycle_msgs</depend>
   <depend>sensor_msgs</depend>
-  <depend>controller_manager_msgs</depend>
   <depend>robotarm_interface</depend>
   <depend>utility</depend>
 

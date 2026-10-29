@@ -1,8 +1,10 @@
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QMessageBox
 from PyQt6.QtCore import Qt
 
 from utility.RequestActionClient import RequestActionClient
 from robotarm_interface.srv import RequestAction
+
+from .controller_modes import mode_name
 
 class ControlHeader(QWidget):
     def __init__(self, store, node):
@@ -55,11 +57,11 @@ class ControlHeader(QWidget):
         self.nodes_label = QLabel("Nodes: none")
         self.nodes_label.setStyleSheet("color: #3498db; font-family: monospace; font-size: 18px;")
         
-        self.controllers_label = QLabel("Controllers: none")
-        self.controllers_label.setStyleSheet("color: #3498db; font-family: monospace; font-size: 18px;")
+        self.mode_label = QLabel("Mode: unknown")
+        self.mode_label.setStyleSheet("color: #3498db; font-family: monospace; font-size: 18px;")
         
         self.info_layout.addWidget(self.nodes_label)
-        self.info_layout.addWidget(self.controllers_label)
+        self.info_layout.addWidget(self.mode_label)
         layout.addLayout(self.info_layout)
 
         # Spacer, pushes the following to the right
@@ -119,6 +121,15 @@ class ControlHeader(QWidget):
         if is_checked:
             req_type = RequestAction.Request.TYPE_START
         else:
+            # Disarming (LIMP) powers off the drives wherever the arm is
+            answer = QMessageBox.question(
+                self, "Disarm",
+                "Disarming powers off the drives: the arm falls wherever it is. Disarm now?")
+            if answer != QMessageBox.StandardButton.Yes:
+                self.btn_arm.blockSignals(True)
+                self.btn_arm.setChecked(True)
+                self.btn_arm.blockSignals(False)
+                return
             req_type = RequestAction.Request.TYPE_STOP
         self.request_action_client.send_request(
             action_id=RequestAction.Request.ACTION_ARM_ROBOT,
@@ -144,7 +155,7 @@ class ControlHeader(QWidget):
         armed = status["armed"]
         stopped = status["stopped"]
         active_node = status["active_node"]
-        active_controllers = ", ".join(status["active_controllers"])
+        mode = status["mode"]
         
         # 1. Connection
         color = "#2ecc71" if connected else "#e74c3c"
@@ -155,9 +166,10 @@ class ControlHeader(QWidget):
         # 2. State
         self.state_label.setText(f"STATE: {state.upper()}")
 
-        # 3. Active node & controllers
+        # 3. Active node & firmware mode
         self.nodes_label.setText(f"Nodes: {active_node if active_node else 'none'}")
-        self.controllers_label.setText(f"Controllers: {active_controllers if active_controllers else 'none'}")
+        mode_text = mode_name(mode) if mode is not None else "unknown"
+        self.mode_label.setText(f"Mode: {mode_text}{' (switching...)' if status['mode_switching'] else ''}")
 
         # 4. Sync the arm button
         if armed != self.btn_arm.isChecked():
@@ -165,6 +177,9 @@ class ControlHeader(QWidget):
             self.btn_arm.setChecked(armed)
             self.btn_arm.blockSignals(False)
         self.btn_arm.setText("DISARM" if armed else "ARM ROBOT")
+        # The firmware rejects requests while switching; STOP and EMERGENCY stay usable
+        # (control_center retries STOP, EMERGENCY_OFF aborts the switch)
+        self.btn_arm.setEnabled(not status["mode_switching"])
 
         # 5. Sync the stop button and its colour (red/green)
         if stopped != self.btn_stop.isChecked():

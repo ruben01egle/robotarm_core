@@ -30,12 +30,11 @@ import rclpy
 from rclpy.action import ActionClient
 
 from robotarm_interface.action import RunMotion
-from robotarm_interface.msg import MotionGoal, MotionStep
+from robotarm_interface.msg import MotionGoal, MotionStep, RobotarmMode
 from robotarm_interface.srv import (GetGoals, RemoveGoal, RemoveProgram, SetGoal, SetProgram,
                                     TeachGoal)
 
 MOTION_SERVER = "motion_server"
-TRAJECTORY_CONTROLLER = "joint_trajectory_controller"
 MOTIONS = ["PTP", "LIN", "OMPL"]
 OFFSET_FRAMES = ["base", "tcp"]
 JOINT_COUNT = 6
@@ -169,7 +168,8 @@ class ProgramWidget(QWidget):
         self.teach_pending = False
 
         self.server_ready = False       # motion_server reachable: plan, teach, edit
-        self.available = False          # ... and the trajectory controller is loaded: run
+        self.available = False          # ... and the firmware offers the TRAJECTORY mode: run
+        self.trajectory_available = False
         self.unavailable_reason = ""
         self.last_update_error = None
 
@@ -931,6 +931,8 @@ class ProgramWidget(QWidget):
         """Why RUN is not possible right now, "" if it is."""
         if not self.available:
             return self.unavailable_reason
+        if status["state"] == "STOP":
+            return "Robot stopped: resume first (PLAN works)"
         if not status["armed"]:
             return "Robot not armed: PLAN only"
         owner = status["active_node"]
@@ -1005,16 +1007,19 @@ class ProgramWidget(QWidget):
 
         # after Ctrl-C rclpy is shut down while the window still runs: no more ROS calls
         server = self.ros_ok() and self.action_client.server_is_ready()
-        loaded = self.store.get_loaded_controllers()
-        controller = loaded is None or TRAJECTORY_CONTROLLER in loaded
+        # Keep the last answer while the firmware switches (available is empty then)
+        if not self.store.get_status()["mode_switching"]:
+            modes = self.store.get_available_modes()
+            self.trajectory_available = modes is not None and RobotarmMode.TRAJECTORY in modes
+        controller = self.trajectory_available
         self.server_ready = server
         self.available = server and controller
         if not server:
             self.unavailable_reason = ("motion_server not running "
                                        "(robot_bringup launch_robot.py, moveit:=true)")
         elif not controller:
-            self.unavailable_reason = (f"{TRAJECTORY_CONTROLLER} not loaded on the RT PC "
-                                       "(firmware patch, see robotarm_moveit_config doc/)")
+            self.unavailable_reason = ("TRAJECTORY mode not available on the firmware "
+                                       "(controller not loaded or hardware not usable)")
         if server and not self.goals_loaded:
             self.reload_goals()
         self.update_ui_lock_state()

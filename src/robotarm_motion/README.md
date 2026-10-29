@@ -27,7 +27,8 @@ flowchart LR
     MS -- "read / write" --> GOALS[("goals.yaml")]
     MS -- "plan, execute_trajectory" --> MG["move_group"]
     MS -- "mission start / stop" --> CC["control_center"]
-    CC -- "activate / deactivate" --> JTC["joint_trajectory_controller<br/>(RT PC)"]
+    CC -- "set_mode TRAJECTORY / ARMED" --> MM["mode_manager<br/>(RT PC)"]
+    MM -- "activate / deactivate" --> JTC["joint_trajectory_controller<br/>(RT PC)"]
     MG -- "FollowJointTrajectory" --> JTC
 ```
 
@@ -118,12 +119,12 @@ Every command goes through the motion_server. Ctrl-C during `run`/`move` cancels
 
 For each job (program, single goal, or the steps of an unsaved program) it checks the steps,
 plans everything, shows the plan in RViz (`display_planned_path`), and unless `plan_only` starts a
-control_center mission for `joint_trajectory_controller`, executes the segments through
+control_center mission in the TRAJECTORY mode, executes the segments through
 move_group (`/execute_trajectory`) and ends the mission. One job at a time.
 
 - move_group checks every segment's start (0.01 rad) and its duration (1.2 × planned + 0.5 s).
-- **STOP, ERROR, EMERGENCY or a lost controller**: control_center deactivates the controller, the
-  job aborts with that reason, no further segment runs.
+- **STOP, ERROR, EMERGENCY or a lost controller**: the firmware stops the motion, the job aborts
+  with that reason, no further segment runs.
 - **Cancel**: move_group (MoveIt 2.12) only handles a cancel request after the execution has
   finished, so the server also publishes `stop` on `/trajectory_execution_event`; the arm holds
   within a few hundred ms and the mission ends.
@@ -151,17 +152,16 @@ ros2 action send_goal --feedback /motion_server/run robotarm_interface/action/Ru
 |---|---|---|
 | `goals_file` | `$ROS_HOME/robotarm_motion/goals.yaml` | |
 | `default_scaling` | 0.2 | speed of jobs that do not set one |
-| `controller` | `joint_trajectory_controller` | controller of the mission |
 | `arm` | false | arm the hardware if control_center is only CONNECTED |
 | `teach_max_velocity` | 0.02 | [rad/s] stillness check before teaching |
 | `use_sim_time` | false | true with the MuJoCo sim |
 
 ## Missions
 
-`joint_trajectory_controller` is spawned inactive; only control_center switches controllers (armed
-check, one mission at a time, deactivation on STOP/ERROR). A job asks for a mission with
-`controller_names=["joint_trajectory_controller"]`, executes, and ends it; control_center
-activates and deactivates `ff_controller` (feedforward, chained below) in the same request.
+`joint_trajectory_controller` is only active in the firmware's TRAJECTORY mode. Only
+control_center requests modes from the firmware's mode_manager (armed check, one mission at a
+time, STOPPED on STOP/ERROR). A job asks for a mission with `mode=TRAJECTORY`, executes, and ends
+it (back to ARMED); the firmware switches the controllers, incl. `ff_controller` (feedforward).
 Trajectories must carry accelerations (they become feedforward torque); `MoveItClient` refuses to
 execute one without them. Once `/system_status`
 has reported MISSION, any other state counts as aborted; after a failed motion the server waits up

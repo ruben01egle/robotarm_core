@@ -3,8 +3,9 @@
 # moveit_simple_controller_manager sends each trajectory to a FollowJointTrajectory action server
 # (<controller name>/<action_ns>), here /joint_trajectory_controller/follow_joint_trajectory.
 # It does NOT talk to the ros2_control controller_manager and never activates/deactivates
-# controllers. On the real robot, control_center activates joint_trajectory_controller (mission
-# request); MoveIt only uses it while it is active. See README, "Design decisions".
+# controllers. On the real robot, the firmware's mode_manager activates joint_trajectory_controller
+# in the TRAJECTORY mode (control_center mission request); MoveIt only uses it while it is active.
+# See README, "Design decisions".
 #
 # The controller name must match the joint_trajectory_controller configured in ros2_control:
 #   - demo:       config/ros2_controllers.yaml of this package

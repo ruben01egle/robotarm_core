@@ -45,7 +45,7 @@ def load_moveit_config(tool):
         # place. The collision matrix in the SRDF was generated for DEFAULT_TOOL.
         .robot_description(mappings={'use_hardware': 'false', 'tool': tool})
         # moveit_manage_controllers=False: MoveIt never switches ros2_control controllers,
-        # control_center does (mission request).
+        # the firmware's mode_manager does (control_center mission request).
         .trajectory_execution(
             file_path='config/moveit_controllers.yaml',
             moveit_manage_controllers=False,

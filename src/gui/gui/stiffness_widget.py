@@ -4,7 +4,9 @@ from PyQt6.QtWidgets import (QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, 
                              QSlider, QDoubleSpinBox, QButtonGroup)
 from PyQt6.QtCore import Qt
 
-from .controller_modes import GC_CONTROLLER, IMPEDANCE_CONTROLLER
+from robotarm_interface.msg import RobotarmMode
+
+from .controller_modes import IMPEDANCE_CONTROLLER, IMPEDANCE_MODES
 
 # Slider resolution: 0.1 N/m or 0.1 Nm/rad
 SLIDER_SCALE = 10
@@ -303,14 +305,16 @@ class StiffnessWidget(QFrame):
         self.summary_label.setText(f"[{c['frame']}] {lin} N/m · {ang} Nm/rad")
 
     def refresh_info(self):
-        loaded = self.store.get_loaded_controllers()
-        if loaded is not None and IMPEDANCE_CONTROLLER not in loaded:
-            text = f"'{IMPEDANCE_CONTROLLER}' is not loaded."
+        status = self.store.get_status()
+        available = self.store.get_available_modes()
+        no_impedance = available is not None and not IMPEDANCE_MODES & available
+        if no_impedance and not status["mode_switching"]:
+            text = "No impedance mode available on the firmware."
         elif self.committed is None:
             text = f"Waiting for '{IMPEDANCE_CONTROLLER}' parameters..."
-        elif GC_CONTROLLER in self.store.get_active_controller_list():
+        elif status["mode"] == RobotarmMode.GRAVITY_COMP:
             text = "Settings apply to the impedance controller only, no effect in hand guiding."
-        elif IMPEDANCE_CONTROLLER not in self.store.get_active_controller_list():
+        elif status["mode"] not in IMPEDANCE_MODES:
             text = "Controller inactive: changes take effect on its next activation."
         else:
             text = ""

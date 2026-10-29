@@ -6,20 +6,19 @@ import xml.etree.ElementTree as ET
 import rclpy
 from rclpy.node import Node
 from rclpy.time import Time
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from sensor_msgs.msg import JointState
 from rcl_interfaces.msg import Log, Parameter, ParameterValue, ParameterType, ParameterEvent
 from rcl_interfaces.srv import GetParameters, SetParametersAtomically
-from controller_manager_msgs.srv import ListControllers
 from tf2_ros import Buffer, TransformListener, TransformException
 
 from PyQt6.QtWidgets import QApplication
 
 from .robot_main_widget import RobotMainWindow
 from .data_store import GuiDataStore
-from .controller_modes import CARTESIAN_JOG_CONTROLLERS, IMPEDANCE_CONTROLLER
+from .controller_modes import CARTESIAN_JOG_CONTROLLERS, IMPEDANCE_CONTROLLER, IMPEDANCE_MODES
 
-from robotarm_interface.msg import SystemStatus
+from robotarm_interface.msg import SystemStatus, ModeState, RobotarmMode
 
 # SystemStatus.state -> name for the display
 STATE_NAMES = {
@@ -64,6 +63,17 @@ class GuiRosNode(Node):
             telemetry_qos
         )
 
+        # Firmware mode, requestable modes and switching (greys out mode buttons). Latched and
+        # published on change only: reliable + transient local, or the current state never arrives
+        self.create_subscription(
+            ModeState,
+            '/mode_manager/state',
+            self.mode_state_cb,
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                       durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        )
+        self.last_mode = None
+
         self.create_subscription(Log, '/rosout', self.log_cb, 10)
 
         # TCP pose from TF (robot_state_publisher on the RT PC), same rate as /joint_states
@@ -81,21 +91,15 @@ class GuiRosNode(Node):
         }
         self.cartesian_limits_timer = self.create_timer(1.0, self.fetch_cartesian_limits_startup)
 
-        # Loaded controllers (to grey out unavailable modes), periodically for restarts of the controller_manager
-        self.list_ctrl_client = self.create_client(ListControllers, '/controller_manager/list_controllers')
-        self.list_ctrl_pending = False
-        self.list_ctrl_timer = self.create_timer(5.0, self.fetch_loaded_controllers)
-
         # Stiffness of the cartesian_impedance_controller: read at start, on every activation and on request
         self.stiffness_get_client = self.create_client(
             GetParameters, f'/{IMPEDANCE_CONTROLLER}/get_parameters')
         self.stiffness_set_client = self.create_client(
             SetParametersAtomically, f'/{IMPEDANCE_CONTROLLER}/set_parameters_atomically')
         self.stiffness_timer = self.create_timer(1.0, self.fetch_stiffness_startup)
-        self.impedance_was_active = False
         self.create_subscription(ParameterEvent, '/parameter_events', self.parameter_event_cb, 10)
 
-        self.store.set_status(state="UNKNOWN", connected=False, armed=False, stopped=False, active_node="", active_controllers=[])
+        self.store.set_status(state="UNKNOWN", connected=False, armed=False, stopped=False, active_node="")
 
     def joint_state_cb(self, msg: JointState):
         try:
@@ -148,13 +152,21 @@ class GuiRosNode(Node):
 
     def system_status_cb(self, msg: SystemStatus):
         state = STATE_NAMES.get(msg.state, f"UNKNOWN ({msg.state})")
-        self.store.set_status(state, msg.connected, msg.armed, msg.stopped, msg.active_node, msg.active_controllers)
+        self.store.set_status(state, msg.connected, msg.armed, msg.stopped, msg.active_node)
 
-        # Read again on every activation, the limits may have changed after a reconfigure
-        impedance_active = IMPEDANCE_CONTROLLER in msg.active_controllers
-        if impedance_active and not self.impedance_was_active:
-            self.request_stiffness_read()
-        self.impedance_was_active = impedance_active
+    def mode_state_cb(self, msg: ModeState):
+        mode = msg.mode.mode
+        self.store.set_mode_state(mode, [m.mode for m in msg.available], msg.switching)
+
+        if mode != self.last_mode:
+            # FAULT lasts only until the firmware has cleaned up to STOPPED, keep it in the log
+            if mode == RobotarmMode.FAULT:
+                self.store.add_log("ERROR", "mode_manager",
+                                   "Controller error, the firmware stops the arm (FAULT -> STOPPED)")
+            # Read again on every activation, the limits may have changed after a reconfigure
+            if mode in IMPEDANCE_MODES and self.last_mode not in IMPEDANCE_MODES:
+                self.request_stiffness_read()
+        self.last_mode = mode
 
     def fetch_urdf_limits_startup(self):
         param_client = self.create_client(GetParameters, '/robot_state_publisher/get_parameters')
@@ -238,23 +250,6 @@ class GuiRosNode(Node):
 
         except Exception as e:
             self.get_logger().error(f"Error reading velocity limits of '{name}': {e}")
-
-    def fetch_loaded_controllers(self):
-        if self.list_ctrl_pending or not self.list_ctrl_client.service_is_ready():
-            return
-        self.list_ctrl_pending = True
-        future = self.list_ctrl_client.call_async(ListControllers.Request())
-        future.add_done_callback(self.loaded_controllers_response_cb)
-
-    def loaded_controllers_response_cb(self, future):
-        try:
-            response = future.result()
-            if response is not None:
-                self.store.set_loaded_controllers([ctrl.name for ctrl in response.controller])
-        except Exception as e:
-            self.get_logger().error(f"Error listing controllers: {e}", throttle_duration_sec=10.0)
-        finally:
-            self.list_ctrl_pending = False
 
     # --- Stiffness of the cartesian_impedance_controller ---
     def fetch_stiffness_startup(self):
@@ -415,7 +410,7 @@ def main(args=None):
     
     # 5. Start the Qt application
     app = QApplication(sys.argv)
-    
+
     # The window gets the ROS node, so buttons can call its methods directly
     window = RobotMainWindow(data_store, ros_node)
     window.show()

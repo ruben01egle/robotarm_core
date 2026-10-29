@@ -20,15 +20,17 @@ class GuiDataStore:
         self.state = "UNKNOWN"
         self.stopped = False
         self.active_node = ""
-        self.active_controllers = []
+
+        # 3. State of the firmware mode manager (/mode_manager/state)
+        self.mode = None                # RobotarmMode value, None until reported
+        self.available_modes = None     # set of requestable modes, None until reported
+        self.mode_switching = False     # a mode request is running, others are rejected
 
         self.joint_limits = list()
         # Root link of the URDF (base frame of the TCP pose), None until the URDF has been read
         self.base_frame = None
         # Per jog controller instance: name -> (max_linear_velocity [m/s], max_angular_velocity [rad/s])
         self.cartesian_limits = {}
-        # Names of the controllers loaded in the controller_manager, None until the first query
-        self.loaded_controllers = None
 
         # Stiffness of the cartesian_impedance_controller as used by the controller ("committed").
         # dict with 'frame', 'linear', 'angular', 'max_linear', 'max_angular', or None until read
@@ -38,7 +40,7 @@ class GuiDataStore:
         # Result of the last apply: (successful, reason) or None, collected by the GUI
         self.stiffness_apply_result = None
 
-        # 3. Log messages from ROS
+        # 4. Log messages from ROS
         self.log_queue = deque(maxlen=50)
 
     def clear_store(self):
@@ -48,11 +50,12 @@ class GuiDataStore:
             self.state = "UNKNOWN"
             self.stopped = False
             self.active_node = ""
-            self.active_controllers = []
+            self.mode = None
+            self.available_modes = None
+            self.mode_switching = False
             self.joint_limits = list()
             self.base_frame = None
             self.cartesian_limits = {}
-            self.loaded_controllers = None
             self.stiffness = None
             self.stiffness_version += 1
             self.stiffness_apply_result = None
@@ -122,14 +125,18 @@ class GuiDataStore:
         with self._lock:
             return dict(self.cartesian_limits)
 
-    def set_loaded_controllers(self, names):
+    def set_mode_state(self, mode, available, switching):
         with self._lock:
-            self.loaded_controllers = set(names)
+            self.mode = mode
+            self.available_modes = set(available)
+            self.mode_switching = switching
 
-    def get_loaded_controllers(self):
-        """Set of loaded controllers, or None while the controller_manager has not been queried."""
+    def get_available_modes(self):
+        """Requestable modes; None until the firmware has reported, empty while switching."""
         with self._lock:
-            return None if self.loaded_controllers is None else set(self.loaded_controllers)
+            if self.available_modes is None:
+                return None
+            return set() if self.mode_switching else set(self.available_modes)
 
     def update_stiffness(self, values: dict):
         """Take over (partial) values of the committed stiffness, e.g. from get_parameters or /parameter_events."""
@@ -157,14 +164,13 @@ class GuiDataStore:
             self.stiffness_apply_result = None
             return result
 
-    def set_status(self, state, connected, armed, stopped, active_node, active_controllers):
+    def set_status(self, state, connected, armed, stopped, active_node):
         with self._lock:
             self.state = state
             self.connected = connected
             self.armed = armed
             self.stopped = stopped
             self.active_node = active_node
-            self.active_controllers = list(active_controllers)
 
     def add_log(self, level, name, text):
         """Called by the ROS node to buffer log messages."""
@@ -216,13 +222,9 @@ class GuiDataStore:
                 "state": self.state,
                 "stopped": self.stopped,
                 "active_node": self.active_node,
-                "active_controllers": list(self.active_controllers)
+                "mode": self.mode,
+                "mode_switching": self.mode_switching,
             }
-
-    def get_active_controller_list(self) -> list:
-        """Controller set of the control_center's running mission."""
-        with self._lock:
-            return list(self.active_controllers)
     
     # --- Live getters (latest frame) ---
     def has_joint_state(self) -> bool:

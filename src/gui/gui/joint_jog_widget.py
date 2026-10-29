@@ -7,8 +7,8 @@ from std_msgs.msg import Float64MultiArray
 from utility.RequestActionClient import RequestActionClient
 from robotarm_interface.srv import RequestAction, SetFloat64
 
-from .controller_modes import (ExecutionToggle, JOINT_STREAM_CONTROLLERS, POSITION, COMPLIANT,
-                               controller_set, set_available)
+from .controller_modes import (ExecutionToggle, JOINT_STREAM_CONTROLLERS, JOINT_STREAM_MODES, POSITION,
+                               COMPLIANT, mode_available)
 
 class JointJogWidget(QWidget):
     def __init__(self, store, node, parent=None):
@@ -18,7 +18,7 @@ class JointJogWidget(QWidget):
         self.name = "JointJogWidget"
 
         self.request_action_client = RequestActionClient(self.node)
-        # One JointStreamController instance per mode: same interface under a different name
+        # Command input of each mode: same JointStreamController interface under a different name
         self.joint_target_pubs = {
             mode: self.node.create_publisher(Float64MultiArray, f'/{name}/commands', 1)
             for mode, name in JOINT_STREAM_CONTROLLERS.items()
@@ -88,7 +88,7 @@ class JointJogWidget(QWidget):
         
         self.main_layout.addLayout(header_layout)
 
-        # Position (joint_stream_controller) | Compliant (impedance + joint_stream_controller_impedance)
+        # Position (JOINT_STREAM) | Compliant (IMPEDANCE_JOINT_STREAM)
         self.execution_toggle = ExecutionToggle()
         self.main_layout.addWidget(self.execution_toggle)
 
@@ -224,7 +224,7 @@ class JointJogWidget(QWidget):
             action_id=RequestAction.Request.ACTION_MISSION,
             request_type=req_type,
             node_name=self.name,
-            controller_names=controller_set(JOINT_STREAM_CONTROLLERS, self.execution_toggle.mode()))
+            mode=JOINT_STREAM_MODES[self.execution_toggle.mode()])
 
     def update_ui_lock_state(self):
         """Enable or disable all inputs according to movement_enabled."""
@@ -272,10 +272,13 @@ class JointJogWidget(QWidget):
             if i < len(self.actual_labels):
                 self.actual_labels[i].setText(f"ACT: {val:.2f}°")
 
-        loaded = self.store.get_loaded_controllers()
+        available = self.store.get_available_modes()
         self.execution_toggle.set_available(
-            set_available(controller_set(JOINT_STREAM_CONTROLLERS, POSITION), loaded),
-            set_available(controller_set(JOINT_STREAM_CONTROLLERS, COMPLIANT), loaded))
+            mode_available(JOINT_STREAM_MODES[POSITION], available),
+            mode_available(JOINT_STREAM_MODES[COMPLIANT], available))
+        # While moving, the selected mode is the actual one and so available; nothing while switching
+        self.btn_toggle_lock.setEnabled(
+            mode_available(JOINT_STREAM_MODES[self.execution_toggle.mode()], available))
 
         status = self.store.get_status()
         if status["active_node"] == self.name:

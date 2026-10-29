@@ -20,6 +20,7 @@ flowchart LR
         RVIZ["RViz"]
     end
     subgraph RT["RT PC (robotarm_firmware_lnx)"]
+        MM["mode_manager"]
         CM["controller_manager"]
         JTC["joint_trajectory_controller<br/>(spawned inactive)"]
         JOG["jog / stream / impedance<br/>controllers"]
@@ -29,7 +30,8 @@ flowchart LR
     GUI -- "RequestAction (arm, stop, missions)" --> CC
     GUI -- "RunMotion, goal services" --> MS
     MS -- "RequestAction (mission)" --> CC
-    CC -- "switch_controller" --> CM
+    CC -- "set_mode" --> MM
+    MM -- "switch controllers, hardware state" --> CM
     MS -- "plan, execute_trajectory" --> MG
     RVIZ -- "plan" --> MG
     MG -- "FollowJointTrajectory" --> JTC
@@ -42,14 +44,14 @@ flowchart LR
 | Component | Runs on | Responsibility |
 |---|---|---|
 | ros2_control (controllers, moteus hardware) | RT PC | real-time loop, `/joint_states`, `/tf` |
-| `control_center` | high-level PC | state machine (IDLE → CONNECTED → ARMED → MISSION), the only node that switches controllers |
+| `mode_manager` (firmware) | RT PC | the only node that switches controllers and the hardware state; offers operating modes (`/mode_manager/set_mode`, `/mode_manager/state`) |
+| `control_center` | high-level PC | state machine (IDLE → CONNECTED → ARMED → MISSION), the only node that requests modes |
 | `move_group` (this package) | high-level PC | planning; executes on `joint_trajectory_controller` while that is active |
 | `motion_server` (`robotarm_motion`) | high-level PC | goals and programs, runs MoveIt jobs inside its own mission |
 
-`joint_trajectory_controller` is inactive until a mission activates it, so a MoveIt execution
-outside a mission is rejected and nothing moves. Like `joint_stream_controller` and
-`cartesian_jog_controller`, it is chained onto `ff_controller`, which adds feedforward torque;
-control_center activates and deactivates `ff_controller` in the same request as these three.
+`joint_trajectory_controller` is only active in the firmware's TRAJECTORY mode, which a mission
+requests, so a MoveIt execution outside a mission is rejected and nothing moves. Which controllers
+make up a mode (e.g. `ff_controller` for the feedforward torque) is internal to the firmware.
 
 ## Files
 
@@ -93,8 +95,8 @@ control_center activates and deactivates `ff_controller` in the same request as 
 - **Conservative limits.** The URDF has motor limits, not tested motion limits, and no acceleration
   limits. The limits here are low and the default scaling is 10 %; raise them step by step.
 - **`moveit_simple_controller_manager`, never switching controllers.** Controller switching belongs
-  to `control_center` (armed check, one mission at a time, deactivation on STOP/ERROR, adding
-  `ff_controller` below the position controllers). MoveIt only knows the action name of
+  to the firmware's mode_manager, which control_center asks for the TRAJECTORY mode (armed check,
+  one mission at a time, STOPPED on STOP/ERROR). MoveIt only knows the action name of
   `joint_trajectory_controller`; `moveit_manage_controllers=False` makes this explicit.
 - **Trajectories with accelerations.** `joint_trajectory_controller` passes accelerations on to
   `ff_controller` as feedforward torque; without them the torque jumps at every point. OMPL gets
@@ -130,7 +132,7 @@ selected in the **Context** tab (`pilz_industrial_motion_planner`, `PTP` or `LIN
 **Never run two RT sides at once** (mock, sim, real robot or `demo.launch.py`) in the same
 `ROS_DOMAIN_ID`: each provides `/controller_manager` and `/joint_states`.
 
-Once: build the firmware (main branch; it has `joint_trajectory_controller` and `ff_controller`):
+Once: build the firmware (main branch; it has the `mode_manager`):
 
 ```bash
 cd <robotarm_firmware_lnx>
@@ -138,7 +140,7 @@ git -c url."https://github.com/".insteadOf="git@github.com:" submodule update --
 source /opt/ros/jazzy/setup.bash && rosdep install --from-paths src --ignore-src -y -r && colcon build
 ```
 
-The standalone `demo.launch.py` has no `ff_controller`: position missions through control_center
+The standalone `demo.launch.py` has no `mode_manager`: control_center stays IDLE, so missions
 (jogging, PROGRAM jobs) only work against the firmware's mock, sim or hardware.
 
 Goals file for the motion_server, once (see `robotarm_motion`):
@@ -148,8 +150,8 @@ mkdir -p ~/.ros/robotarm_motion
 cp /robotarm_core/install/robotarm_motion/share/robotarm_motion/config/goals_example.yaml ~/.ros/robotarm_motion/goals.yaml
 ```
 
-Terminal 1, RT side (wait until `joint_trajectory_controller ... inactive` is listed by
-`ros2 control list_controllers`):
+Terminal 1, RT side (wait until `/mode_manager/state` reports a mode other than UNKNOWN; echo it
+with `--qos-reliability reliable --qos-durability transient_local`):
 
 ```bash
 cd <robotarm_firmware_lnx> && source install/setup.bash
@@ -184,11 +186,12 @@ gives it a wrong collision model; with another tool, regenerate the collision ma
 - **Arm**: ARM in the GUI header, or
   `ros2 service call /request_action robotarm_interface/srv/RequestAction "{node_name: operator, action_id: 1, request_type: 254}"`.
 - **Move**: GUI tab **PROGRAM** or the `motion` command line (`robotarm_motion` README).
-- **Stop**: STOP in the GUI header (the job aborts, the arm holds), RESUME to continue; or
-  `action_id: 11` with `request_type: 254` (stop) / `255` (leave stop).
+- **Stop**: STOP in the GUI header (the job aborts, the drives hold without feedforward), RESUME
+  to continue (the arm may lift slightly) or DISARM; or `action_id: 11` with `request_type: 254`
+  (stop) / `255` (leave stop). A controller error during a mission also ends in STOP.
   (`action_id`: 1 ARM, 2 MISSION, 11 STOP, 12 EMERGENCY; `request_type`: 254 start, 255 stop.)
 - **RViz Execute** only moves the arm during a mission. To use it, start one by hand
-  (`action_id: 2, request_type: 254, controller_names: [joint_trajectory_controller]`, `255` to end
+  (`action_id: 2, request_type: 254, mode: {mode: 4}` (TRAJECTORY), `255` to end
   it). Do not press Execute while a motion_server job runs: it replaces the running segment.
 - **Shut down**: close the GUI, Ctrl-C terminal 2, then terminal 1.
 
@@ -200,8 +203,8 @@ gives it a wrong collision model; with another tool, regenerate the collision ma
 - **Clocks**: synchronise both PCs (NTP/chrony). More than about a second apart and MoveIt treats
   the robot state as outdated ("Failed to fetch current robot state").
 - **RT PC**: real-time setup and `/dev/fdcanusb` as in the firmware's `docs/REALTIME_SETUP.md`.
-- **Safety**: e-stop in reach, nobody in the working area. Every job activates and deactivates
-  `joint_trajectory_controller` on the RT PC; make sure these transitions are tested on the hardware.
+- **Safety**: e-stop in reach, nobody in the working area. Every job switches the firmware from
+  ARMED to TRAJECTORY and back; make sure these transitions are tested on the hardware.
 - **First motions**: jog to a free pose, teach it, jog a few degrees away, plan to it and check the
   path in RViz, then run at 10 %. Compare `/joint_states` with the plan, then raise the limits.
 
@@ -280,8 +283,8 @@ References: `kdl_kinematics_plugin` (moveit_kinematics) and pick_ik.
 
 1. **No access control during a mission**: while a mission keeps a controller active, any node
    sending trajectories or jog commands moves the arm. Closing that needs SROS2.
-2. **control_center is not enforced**: `ros2 control switch_controllers` bypasses it; it only
-   notices a lost controller during a mission, not one activated while ARMED.
+2. **control_center is not enforced**: calling `/mode_manager/set_mode` directly bypasses it; it
+   only notices a mode change during a mission (and EMERGENCY_OFF in any state).
 3. **`/joint_states` is 50 Hz on the RT PC** (500 Hz in the demo): fine for MoveIt;
    control_center's watchdog triggers after 0.5 s without a message.
 
@@ -289,4 +292,6 @@ References: `kdl_kinematics_plugin` (moveit_kinematics) and pick_ik.
 
 On the real robot, the MuJoCo sim, the firmware mock and the demo (mock hardware, plus
 control_center): planning with OMPL and Pilz, programs with blending, execution in a mission with
-`ff_controller`, STOP and cancel during a job, start states on a joint limit (sim).
+`ff_controller`, STOP and cancel during a job, start states on a joint limit (sim). This was before
+the switch to the firmware's mode_manager; the mode requests have only been tested against a fake
+mode_manager so far.
