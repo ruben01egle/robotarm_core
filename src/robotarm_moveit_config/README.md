@@ -278,22 +278,15 @@ References: `kdl_kinematics_plugin` (moveit_kinematics) and pick_ik.
 
 ## Open issues
 
-1. **First run on the real robot**: mock and sim first, then hardware at 10 % with the e-stop in hand.
-   Check that the firmware's trajectory tolerances (`controllers.yaml`, PRELIMINARY: 0.1 rad while
-   moving, 0.01 rad at the goal) trigger, e.g. by gently blocking a joint at low speed.
-2. **ff_controller on the real robot**: the switching (one request with `ff_controller`) is unit
-   tested and runs in the MuJoCo sim; on the hardware, check that every mode engages and
-   disengages without the arm sagging and that `list_controllers` always shows one of the valid
-   combinations.
-3. **No access control during a mission**: while a mission keeps a controller active, any node
+1. **No access control during a mission**: while a mission keeps a controller active, any node
    sending trajectories or jog commands moves the arm. Closing that needs SROS2.
-4. **control_center is not enforced**: `ros2 control switch_controllers` bypasses it; it only
+2. **control_center is not enforced**: `ros2 control switch_controllers` bypasses it; it only
    notices a lost controller during a mission, not one activated while ARMED.
-5. **`/joint_states` is 50 Hz on the RT PC** (500 Hz in the demo): fine for MoveIt;
+3. **`/joint_states` is 50 Hz on the RT PC** (500 Hz in the demo): fine for MoveIt;
    control_center's watchdog triggers after 0.5 s without a message.
 
 ## Tested
 
-With the demo (mock hardware) plus control_center, and with the firmware mock and the MuJoCo sim:
-planning with OMPL and Pilz, programs with blending, execution in a mission, STOP and cancel during
-a job, start states on a joint limit (sim). The real robot has not been tested yet.
+On the real robot, the MuJoCo sim, the firmware mock and the demo (mock hardware, plus
+control_center): planning with OMPL and Pilz, programs with blending, execution in a mission with
+`ff_controller`, STOP and cancel during a job, start states on a joint limit (sim).
