@@ -128,7 +128,8 @@ move_group (`/execute_trajectory`) and ends the mission. One job at a time.
 - **Cancel**: move_group (MoveIt 2.12) only handles a cancel request after the execution has
   finished, so the server also publishes `stop` on `/trajectory_execution_event`; the arm holds
   within a few hundred ms and the mission ends.
-- **Teach** is refused while a job runs and while a joint moves faster than `teach_max_velocity`.
+- **Teach** is refused while a job runs and while a joint moves faster than `teach_max_velocity`,
+  measured as position change over the last 0.3 s (not the noisy reported velocity).
 - RViz *Execute* during a job would replace the running segment (not guarded: same operator).
 
 | Service (`/motion_server/...`) | Type | |

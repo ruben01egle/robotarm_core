@@ -84,7 +84,7 @@ class MotionServer(Node):
         self.mission = ControlCenterMission(self, self.moveit, arm=param('arm').value)
         self._busy = threading.Lock()
         self._goals_lock = threading.Lock()   # around every read and write of the goals file
-        # (receive time, {joint: position}, max |velocity| or None) of the last STILL_WINDOW
+        # (receive time, {joint: position}) of the last STILL_WINDOW
         self._recent_states = deque()
         self._states_lock = threading.Lock()
         self.create_subscription(JointState, 'joint_states', self._joint_state_cb, 10)
@@ -286,30 +286,30 @@ class MotionServer(Node):
 
     def _joint_state_cb(self, msg):
         now = time.monotonic()
-        speed = max((abs(v) for v in msg.velocity), default=None)
         with self._states_lock:
-            self._recent_states.append((now, dict(zip(msg.name, msg.position)), speed))
+            self._recent_states.append((now, dict(zip(msg.name, msg.position))))
             while self._recent_states and now - self._recent_states[0][0] > STILL_WINDOW:
                 self._recent_states.popleft()
 
     def _check_still(self):
-        """Raise JobError if a joint moved faster than teach_max_velocity in the last window."""
+        """Raise JobError if a joint moved faster than teach_max_velocity in the last window.
+
+        The speed is the mean over the window (position change / time), not the reported
+        velocity: a single noisy velocity sample of a still joint must not block teaching.
+        """
         limit = self.get_parameter('teach_max_velocity').value
         with self._states_lock:
             states = list(self._recent_states)
-        if not states:
+        if len(states) < 2:
             return   # current_joints() reports missing joint states
-        speeds = [s for _, _, s in states if s is not None]
-        if speeds:
-            speed = max(speeds)
-        elif len(states) > 1:   # no velocities in /joint_states: from the positions
-            dt = states[-1][0] - states[0][0]
-            first, last = states[0][1], states[-1][1]
-            speed = max(abs(last[j] - first[j]) for j in first if j in last) / dt if dt else 0.0
-        else:
-            speed = 0.0
+        (t0, first), (t1, last) = states[0], states[-1]
+        if t1 <= t0:
+            return
+        speed, joint = max(((abs(last[j] - first[j]) / (t1 - t0), j) for j in first if j in last),
+                           default=(0.0, ''))
         if speed > limit:
-            raise JobError(f'robot is moving ({speed:.3f} rad/s > {limit} rad/s), hold still')
+            raise JobError(f'robot is moving ({joint}: {speed:.3f} rad/s > {limit} rad/s), '
+                           'hold still')
 
     # ----- job -------------------------------------------------------------------------------
 
