@@ -8,24 +8,18 @@ POSITION = "position"
 COMPLIANT = "compliant"
 
 # The firmware mode manager switches the controllers; the GUI only requests modes.
-JOINT_STREAM_MODES = {
-    POSITION: RobotarmMode.JOINT_STREAM,
-    COMPLIANT: RobotarmMode.IMPEDANCE_JOINT_STREAM,
-}
+# Joint streaming is position controlled only
+JOINT_STREAM_MODE = RobotarmMode.JOINT_STREAM
 CARTESIAN_JOG_MODES = {
     POSITION: RobotarmMode.CARTESIAN_JOG,
     COMPLIANT: RobotarmMode.IMPEDANCE_JOG,
 }
 # Modes in which the cartesian_impedance_controller runs (its stiffness applies)
-IMPEDANCE_MODES = {RobotarmMode.IMPEDANCE, RobotarmMode.IMPEDANCE_JOINT_STREAM,
-                   RobotarmMode.IMPEDANCE_JOG}
+IMPEDANCE_MODES = {RobotarmMode.IMPEDANCE, RobotarmMode.IMPEDANCE_JOG}
 
 # Command inputs of the modes: topics and services are relative to these names
 IMPEDANCE_CONTROLLER = "cartesian_impedance_controller"
-JOINT_STREAM_CONTROLLERS = {
-    POSITION: "joint_stream_controller",
-    COMPLIANT: "joint_stream_controller_impedance",
-}
+JOINT_STREAM_CONTROLLER = "joint_stream_controller"
 CARTESIAN_JOG_CONTROLLERS = {
     POSITION: "cartesian_jog_controller",
     COMPLIANT: "cartesian_jog_controller_impedance",

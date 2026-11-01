@@ -7,8 +7,7 @@ from std_msgs.msg import Float64MultiArray
 from utility.RequestActionClient import RequestActionClient
 from robotarm_interface.srv import RequestAction, SetFloat64
 
-from .controller_modes import (ExecutionToggle, JOINT_STREAM_CONTROLLERS, JOINT_STREAM_MODES, POSITION,
-                               COMPLIANT, mode_available)
+from .controller_modes import JOINT_STREAM_CONTROLLER, JOINT_STREAM_MODE, POSITION, mode_available
 
 class JointJogWidget(QWidget):
     def __init__(self, store, node, parent=None):
@@ -18,15 +17,10 @@ class JointJogWidget(QWidget):
         self.name = "JointJogWidget"
 
         self.request_action_client = RequestActionClient(self.node)
-        # Command input of each mode: same JointStreamController interface under a different name
-        self.joint_target_pubs = {
-            mode: self.node.create_publisher(Float64MultiArray, f'/{name}/commands', 1)
-            for mode, name in JOINT_STREAM_CONTROLLERS.items()
-        }
-        self.speed_scale_clients = {
-            mode: self.node.create_client(SetFloat64, f'/{name}/scale_speed')
-            for mode, name in JOINT_STREAM_CONTROLLERS.items()
-        }
+        self.joint_target_pub = self.node.create_publisher(
+            Float64MultiArray, f'/{JOINT_STREAM_CONTROLLER}/commands', 1)
+        self.speed_scale_client = self.node.create_client(
+            SetFloat64, f'/{JOINT_STREAM_CONTROLLER}/scale_speed')
         
         # Internal state
         self.limits = []
@@ -87,10 +81,6 @@ class JointJogWidget(QWidget):
         header_layout.addWidget(self.btn_toggle_lock)
         
         self.main_layout.addLayout(header_layout)
-
-        # Position (JOINT_STREAM) | Compliant (IMPEDANCE_JOINT_STREAM)
-        self.execution_toggle = ExecutionToggle()
-        self.main_layout.addWidget(self.execution_toggle)
 
         # --- 2. SPEED OVERRIDE SECTION ---
         self.setup_speed_slider_ui()
@@ -177,18 +167,17 @@ class JointJogWidget(QWidget):
         self.main_layout.addWidget(speed_container)
 
     def execution_mode(self) -> str:
-        return self.execution_toggle.mode() if self.num_joints else None
+        # Joint streaming is position controlled only
+        return POSITION if self.num_joints else None
 
     def on_speed_slider_released(self):
         self.send_speed_scale()
 
     def send_speed_scale(self):
-        """Send the speed scale to the instance of the selected mode (each instance has its own value)."""
-        mode = self.execution_toggle.mode()
-        client = self.speed_scale_clients[mode]
+        client = self.speed_scale_client
         target = self.speed_slider.value() / 100
         if not client.service_is_ready():
-            self.node.get_logger().warn(f"Speed service '/{JOINT_STREAM_CONTROLLERS[mode]}/scale_speed' is not available!")
+            self.node.get_logger().warn(f"Speed service '/{JOINT_STREAM_CONTROLLER}/scale_speed' is not available!")
             return
         try:
             req = SetFloat64.Request()
@@ -224,14 +213,13 @@ class JointJogWidget(QWidget):
             action_id=RequestAction.Request.ACTION_MISSION,
             request_type=req_type,
             node_name=self.name,
-            mode=JOINT_STREAM_MODES[self.execution_toggle.mode()])
+            mode=JOINT_STREAM_MODE)
 
     def update_ui_lock_state(self):
         """Enable or disable all inputs according to movement_enabled."""
         for slider in self.sliders:
             slider.setEnabled(self.movement_enabled)
         self.speed_slider.setEnabled(self.movement_enabled)
-        self.execution_toggle.set_locked(self.movement_enabled)
 
         if self.movement_enabled:
             self.btn_toggle_lock.setText("DISABLE MOVEMENT")
@@ -251,7 +239,7 @@ class JointJogWidget(QWidget):
             # to the actual robot state, so the robot does not jump at the start
             if self.movement_enabled:
                 self.sync_sliders_to_actual()
-                # Bring the freshly activated instance to the displayed speed scale
+                # Bring the freshly activated controller to the displayed speed scale
                 self.send_speed_scale()
 
     def update_widget(self):
@@ -272,13 +260,9 @@ class JointJogWidget(QWidget):
             if i < len(self.actual_labels):
                 self.actual_labels[i].setText(f"ACT: {val:.2f}°")
 
-        available = self.store.get_available_modes()
-        self.execution_toggle.set_available(
-            mode_available(JOINT_STREAM_MODES[POSITION], available),
-            mode_available(JOINT_STREAM_MODES[COMPLIANT], available))
-        # While moving, the selected mode is the actual one and so available; nothing while switching
+        # While moving, the mode is the actual one and so available; nothing while switching
         self.btn_toggle_lock.setEnabled(
-            mode_available(JOINT_STREAM_MODES[self.execution_toggle.mode()], available))
+            mode_available(JOINT_STREAM_MODE, self.store.get_available_modes()))
 
         status = self.store.get_status()
         if status["active_node"] == self.name:
@@ -293,7 +277,7 @@ class JointJogWidget(QWidget):
                 self.target_labels[i].setText(f"SET: {target_positions_deg[i]:.2f}°")
             msg = Float64MultiArray()
             msg.data = [math.radians(deg) for deg in target_positions_deg]
-            self.joint_target_pubs[self.execution_toggle.mode()].publish(msg)
+            self.joint_target_pub.publish(msg)
 
     def sync_sliders_to_actual(self):
         """Set the sliders exactly to where the robot currently is."""

@@ -29,8 +29,7 @@ class SystemState(Enum):
 # and stop; EMERGENCY_OFF only through the emergency.
 MISSION_MODES = {
     RobotarmMode.JOINT_STREAM, RobotarmMode.CARTESIAN_JOG, RobotarmMode.TRAJECTORY,
-    RobotarmMode.GRAVITY_COMP, RobotarmMode.IMPEDANCE, RobotarmMode.IMPEDANCE_JOINT_STREAM,
-    RobotarmMode.IMPEDANCE_JOG,
+    RobotarmMode.GRAVITY_COMP, RobotarmMode.IMPEDANCE, RobotarmMode.IMPEDANCE_JOG,
 }
 
 # Firmware modes in which no controller moves the arm: STOP and ERROR leave them as they are
