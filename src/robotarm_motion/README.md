@@ -80,6 +80,10 @@ programs:
    neighbouring goals, and neighbouring blend spheres must not overlap. Errors name the step.
 4. Joint goal → joint constraints; Cartesian goal or offset → tcp pose for LIN, joint goal from IK
    (with seed) for PTP/OMPL.
+5. **Jerk limited**: every planned Pilz sequence goes through `/smooth_trajectory`
+   (`robotarm_trajectory_smoothing`, `max_jerk` in `joint_limits.yaml`), blend corners included;
+   OMPL plans are smoothed by move_group's Ruckig adapter. A sequence gets a few tenths of a second
+   longer and its corners are rounded slightly more (well below 1 mm at 20 %).
 
 CIRC is not supported in programs yet. Pilz blending can fail at higher speeds ("Blending
 failed"): use a smaller blend or a lower speed.

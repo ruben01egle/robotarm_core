@@ -1,4 +1,4 @@
-"""Start MoveIt's move_group node and, optionally, RViz with the MotionPlanning panel.
+"""Start MoveIt's move_group node, the trajectory_smoother and, optionally, RViz.
 
 Use this file against a running ros2_control stack (RT PC, robotarm_firmware_lnx). It does NOT
 start a controller_manager or a robot_state_publisher; both have to be provided by the robot:
@@ -86,6 +86,21 @@ def launch_setup(context):
         ],
     )
 
+    # Jerk-limited smoothing of whole trajectories (/smooth_trajectory); robotarm_motion smooths
+    # every blended Pilz sequence with it, whose blend zones the pipeline adapter does not reach.
+    # Needs the same robot model and limits (robot_description_planning) as move_group.
+    trajectory_smoother_node = Node(
+        package='robotarm_trajectory_smoothing',
+        executable='trajectory_smoother',
+        output='screen',
+        parameters=[
+            moveit_config.robot_description,
+            moveit_config.robot_description_semantic,
+            moveit_config.joint_limits,
+            sim_time,
+        ],
+    )
+
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
@@ -105,7 +120,7 @@ def launch_setup(context):
         condition=IfCondition(LaunchConfiguration('rviz')),
     )
 
-    return [move_group_node, rviz_node]
+    return [move_group_node, trajectory_smoother_node, rviz_node]
 
 
 def generate_launch_description():

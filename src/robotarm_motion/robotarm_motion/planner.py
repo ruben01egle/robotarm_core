@@ -6,6 +6,11 @@ one blended Pilz sequence (action /sequence_move_group, plan only), an OMPL step
 request (plan only). The service /plan_sequence_path is not used: in MoveIt 2.12.4 it fails every
 blended sequence ("Blending failed"), while the action plans the same request.
 
+Every Pilz sequence is then made jerk limited as a whole (service /smooth_trajectory,
+robotarm_trajectory_smoothing, max_jerk in joint_limits.yaml): Pilz profiles are trapezoidal and
+its blends and LIN motions have jumping accelerations, which ff_controller would turn into torque
+steps.
+
 Every segment starts where the previous one ends, so the whole program is planned before anything
 moves: if one step cannot be planned, nothing moves.
 
@@ -29,6 +34,7 @@ from moveit_msgs.msg import (
     RobotTrajectory)
 from moveit_msgs.srv import GetPositionIK
 from rclpy.action import ActionClient
+from robotarm_interface.srv import SmoothTrajectory
 from robotarm_motion.goals import CartesianGoal, GoalFileError, JOINTS, PILZ_MOTIONS, rotate
 from robotarm_motion.moveit_client import (
     BASE_FRAME, duration_s, ERROR_NAMES, GROUP, MotionError, OMPL, PILZ, TCP_LINK, wait_for)
@@ -78,6 +84,7 @@ class Planner:
         self.moveit = moveit
         self._ik_client = node.create_client(GetPositionIK, 'compute_ik')
         self._sequence_client = ActionClient(node, MoveGroupSequence, 'sequence_move_group')
+        self._smooth_client = node.create_client(SmoothTrajectory, 'smooth_trajectory')
         self._display_pub = node.create_publisher(DisplayTrajectory, 'display_planned_path', 1)
 
     def wait_for_services(self, timeout=30.0):
@@ -85,6 +92,9 @@ class Planner:
             raise MotionError('move_group service /compute_ik not available')
         if not self._sequence_client.wait_for_server(timeout_sec=timeout):
             raise MotionError('move_group action /sequence_move_group not available')
+        if not self._smooth_client.wait_for_service(timeout_sec=timeout):
+            raise MotionError('service /smooth_trajectory not available '
+                              '(trajectory_smoother, started with move_group)')
 
     # ----- goal resolution -------------------------------------------------------------------
 
@@ -190,7 +200,18 @@ class Planner:
                               f'{ERROR_NAMES.get(res.error_code.val, res.error_code.val)} '
                               '(see the move_group log for the reason)')
         trajectory = concatenate([t.joint_trajectory for t in res.planned_trajectories])
+        trajectory = self.smooth(trajectory)
         return PlannedSegment('pilz', segment.steps, trajectory)
+
+    def smooth(self, trajectory):
+        """Jerk-limited version of a timed JointTrajectory (moving average, same path)."""
+        req = SmoothTrajectory.Request()
+        req.trajectory = trajectory
+        res = wait_for(self._smooth_client.call_async(req), timeout=30.0)
+        if not res.success:
+            raise MotionError(f'trajectory smoothing failed: {res.message}')
+        self.node.get_logger().info(f'trajectory smoothed: {res.message}')
+        return res.trajectory
 
     def plan(self, goal_file, segments, scaling, start_joints, attempts=2):
         """

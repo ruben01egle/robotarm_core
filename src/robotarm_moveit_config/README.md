@@ -60,15 +60,15 @@ make up a mode (e.g. `ff_controller` for the feedforward torque) is internal to 
 | `.setup_assistant` | URDF (`robotarm_description`, xacro args `use_hardware:=false tool:=axis_triad`) and SRDF location |
 | `config/robotarm.srdf` | group `arm`, named states, disabled collision pairs |
 | `config/kinematics.yaml` | IK: pick_ik, `global` mode, 0.1 mm / 0.001 rad thresholds |
-| `config/joint_limits.yaml` | velocity/acceleration limits, default scaling 0.1 — **PRELIMINARY** |
+| `config/joint_limits.yaml` | velocity/acceleration/jerk limits (2 rad/s, 4 rad/s², 15 rad/s³), default scaling 0.1 |
 | `config/pilz_cartesian_limits.yaml` | TCP limits for Pilz LIN/CIRC: 0.1 m/s, 0.25 m/s², 0.5 rad/s — **PRELIMINARY** |
-| `config/ompl_planning.yaml` | OMPL pipeline, default `RRTConnect` |
+| `config/ompl_planning.yaml` | OMPL pipeline, default `RRTConnect`, TOTG + Ruckig (jerk limited) |
 | `config/pilz_industrial_motion_planner_planning.yaml` | Pilz pipeline and sequence capability |
 | `config/moveit_controllers.yaml` | `moveit_simple_controller_manager` → `joint_trajectory_controller`, execution tolerances |
 | `config/ros2_controllers.yaml` | ros2_control for the demo only (the RT PC has its own) |
 | `config/moveit.rviz` | RViz: solid robot = actual state (RobotModel, `/tf`), see-through = planned motion (Trajectory), collision objects (PlanningScene), frames (TF); no MotionPlanning display. Installed as a symlink with `--symlink-install`, so *File → Save Config* writes here |
 | `launch/demo.launch.py` | standalone demo with mock hardware (`rviz:=`) |
-| `launch/move_group.launch.py` | move_group (+ RViz) against the real ros2_control stack (`rviz:=`, `tool:=`, `use_sim_time:=`, `allow_trajectory_execution:=`) |
+| `launch/move_group.launch.py` | move_group, `trajectory_smoother` (`/smooth_trajectory`, package `robotarm_trajectory_smoothing`) (+ RViz) against the real ros2_control stack (`rviz:=`, `tool:=`, `use_sim_time:=`, `allow_trajectory_execution:=`) |
 | `launch/setup_assistant.launch.py` | Setup Assistant on the *installed* copy |
 
 **SRDF details**
@@ -79,9 +79,10 @@ make up a mode (e.g. `ff_controller` for the feedforward torque) is internal to 
   from its singularity). Start Cartesian motions from `ready`-like poses.
 - No virtual joint: `base` is the root and the planning frame.
 
-**Joint limits** (`joint_limits.yaml`): axis1–3 0.8 rad/s, 1.5 rad/s²; axis4–6 1.0 rad/s,
-2.0 rad/s². Position limits come from the URDF; the velocities must stay below the URDF `velocity`
-(2.5–3.14 rad/s) or Pilz refuses to plan. Raise them only after measuring on the hardware.
+**Joint limits** (`joint_limits.yaml`), the same on all joints: velocity 2 rad/s, acceleration
+4 rad/s², jerk 15 rad/s³ (slightly below the RT PC controllers' 5 rad/s², 15 rad/s³). The jerk is
+not scaled by the request's scaling factors. Position limits come from the URDF; the velocities
+must stay below the URDF `velocity` (2.5–3.14 rad/s) or Pilz refuses to plan.
 
 ## Design decisions
 
@@ -92,8 +93,9 @@ make up a mode (e.g. `ff_controller` for the feedforward torque) is internal to 
 - **pick_ik instead of KDL.** Better success far from the seed, optional cost terms, works for any
   chain without code generation. Our own analytic IK can replace it later
   ([Own IK](#own-ik)).
-- **Conservative limits.** The URDF has motor limits, not tested motion limits, and no acceleration
-  limits. The limits here are low and the default scaling is 10 %; raise them step by step.
+- **Limits below the RT PC's.** The URDF has motor limits, not tested motion limits, and no
+  acceleration limits. The limits here are a bit below the RT PC controllers' and the default
+  scaling is 10 %.
 - **`moveit_simple_controller_manager`, never switching controllers.** Controller switching belongs
   to the firmware's mode_manager, which control_center asks for the TRAJECTORY mode (armed check,
   one mission at a time, STOPPED on STOP/ERROR). MoveIt only knows the action name of
@@ -102,6 +104,17 @@ make up a mode (e.g. `ff_controller` for the feedforward torque) is internal to 
   `ff_controller` as feedforward torque; without them the torque jumps at every point. OMPL gets
   them from the time parameterization (`AddTimeOptimalParameterization`), Pilz computes them;
   `robotarm_motion` refuses to execute a trajectory without them.
+- **Jerk-limited trajectories.** Accelerations that jump become torque steps in `ff_controller` and
+  make the arm oscillate. OMPL: `AddRuckigTrajectorySmoothing` after TOTG. Pilz: its profiles are
+  trapezoidal, and in LIN motions and blends the accelerations are finite differences of IK
+  samples (measured: up to several hundred times `max_jerk`). MoveIt's Ruckig adapter cannot be used
+  in the Pilz pipeline: it changes the 0.1 s sampling and Pilz then refuses to blend; applied to a
+  whole sequence it must hit every noisy waypoint acceleration, stretches the timing to its maximum
+  and still fails. So `robotarm_trajectory_smoothing` filters every planned sequence with two moving
+  averages (0.1 s, then the window `max_jerk` needs; FIR jerk limitation): always succeeds, never
+  faster than the plan, a few tenths of a second longer, path within 0.3 mm at 20 % speed (blend
+  corners at 50 %: 2 mm). `robotarm_motion` does this for every Pilz segment; **Pilz plans made and
+  executed in RViz are not jerk limited.**
 
 ## Quickstart
 
@@ -263,6 +276,8 @@ References: `kdl_kinematics_plugin` (moveit_kinematics) and pick_ik.
   a start up to 0.01 rad outside onto the limit; RViz cannot, jog the joint off its limit first.
 - **Pilz LIN near singularities** (`axis5 = 0`, the stretched `home` pose) fails with
   `NO_IK_SOLUTION`.
+- **Lower `max_jerk` = longer motions and rounder corners**: the smoothing window is the
+  acceleration range divided by the jerk limit.
 - **Pilz blending at higher speed** can exceed a joint's deceleration limit ("Blending failed");
   use a smaller blend radius or a lower speed.
 - **`/plan_sequence_path` fails every blended sequence** in MoveIt 2.12.4 ("Blending failed"); the

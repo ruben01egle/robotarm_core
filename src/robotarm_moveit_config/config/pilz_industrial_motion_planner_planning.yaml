@@ -18,7 +18,12 @@ request_adapters:
   - default_planning_request_adapters/ValidateWorkspaceBounds
   - default_planning_request_adapters/CheckStartStateBounds
   - default_planning_request_adapters/CheckStartStateCollision
-# No time parameterization adapter: Pilz already produces timed trajectories.
+# No time parameterization or smoothing adapter: Pilz already produces timed trajectories, with
+# trapezoidal profiles (not jerk limited). AddRuckigTrajectorySmoothing cannot be added here: it
+# changes the 0.1 s sampling of the items, and Pilz then refuses to blend them ("Second trajectory
+# violates sampline time", "Blending failed"). robotarm_motion smooths every planned Pilz sequence
+# afterwards instead (robotarm_trajectory_smoothing, service /smooth_trajectory); Pilz plans made
+# in RViz are NOT jerk limited.
 response_adapters:
   - default_planning_response_adapters/ValidateSolution
   - default_planning_response_adapters/DisplayMotionPath
