@@ -18,6 +18,7 @@ the goal and program services and messages) are in `robotarm_interface`.
 | `robotarm_motion/moveit_client.py` | `MoveItClient`: move_group requests, execution, cancel, FK, start state at a limit |
 | `robotarm_motion/cli.py` | `ros2 run robotarm_motion motion ...` |
 | `robotarm_motion/demo_motions.py` | test motions directly through move_group |
+| `scripts/compare_smoothing.py` | Pilz with vs. without the jerk filter: figures and jerk-limit statistics |
 | `config/goals_example.yaml` | example goals and programs |
 | `launch/motion_server.launch.py` | the motion_server (included by `robot_bringup` `launch_robot.py`) |
 
@@ -82,8 +83,9 @@ programs:
    (with seed) for PTP/OMPL.
 5. **Jerk limited**: every planned Pilz sequence goes through `/smooth_trajectory`
    (`robotarm_trajectory_smoothing`, `max_jerk` in `joint_limits.yaml`), blend corners included;
-   OMPL plans are smoothed by move_group's Ruckig adapter. A sequence gets a few tenths of a second
-   longer and its corners are rounded slightly more (well below 1 mm at 20 %).
+   OMPL plans are smoothed by move_group's Ruckig adapter. Stops (steps without `blend`) are kept
+   exact: the filter splits the sequence there. Blend corners are rounded slightly more (well
+   below 1 mm at 20 %), and every stop adds about 0.2–0.6 s.
 
 CIRC is not supported in programs yet. Pilz blending can fail at higher speeds ("Blending
 failed"): use a smaller blend or a lower speed.
@@ -202,6 +204,23 @@ the difference. Further outside: `START_STATE_INVALID`, jog the joint back first
 `ros2 run robotarm_motion demo_motions [--mission [--arm]] [--scaling S] [--execute-lin]` runs
 OMPL `home → ready`, Pilz PTP back, and a Pilz LIN of +5 cm, and checks result code, peak velocity,
 goal reached and the straight LIN path. Without `--mission` for the standalone demo.
+
+`scripts/compare_smoothing.py` compares the saved programs with and without the jerk filter
+(`/smooth_trajectory`): it plans them (nothing moves), evaluates both versions like
+joint_trajectory_controller (quintic splines through the points), saves one figure per program
+(position, velocity, acceleration, jerk of one joint, both overlaid) and prints how often and by
+how much each joint exceeds its jerk limit. A second figure per program shows how far the filtered
+TCP is from the Pilz TCP path over time (position and orientation, from move_group's FK, searched
+within the filter's time window so a path visiting a place twice is not mismatched), with the
+stops marked; `--no-tcp` skips it. Standalone: it starts its own move_group and
+trajectory_smoother (no RViz, no execution) in a private ROS domain limited to this machine, so a
+running robot system is not touched; `--use-running` uses the move_group of the current domain.
+
+```bash
+python3 src/robotarm_motion/scripts/compare_smoothing.py [PROGRAM ...] [--start ready] \
+    [--scaling 0.2] [--joint axis3] [--out DIR] [--show] [--tool axis_triad] [--no-tcp] \
+    [--use-running]
+```
 
 ```bash
 colcon test --packages-select robotarm_motion && colcon test-result --verbose

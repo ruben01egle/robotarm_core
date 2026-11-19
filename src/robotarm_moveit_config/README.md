@@ -112,9 +112,11 @@ must stay below the URDF `velocity` (2.5–3.14 rad/s) or Pilz refuses to plan.
   whole sequence it must hit every noisy waypoint acceleration, stretches the timing to its maximum
   and still fails. So `robotarm_trajectory_smoothing` filters every planned sequence with two moving
   averages (0.1 s, then the window `max_jerk` needs; FIR jerk limitation): always succeeds, never
-  faster than the plan, a few tenths of a second longer, path within 0.3 mm at 20 % speed (blend
-  corners at 50 %: 2 mm). `robotarm_motion` does this for every Pilz segment; **Pilz plans made and
-  executed in RViz are not jerk limited.**
+  faster than the plan, path within 0.3 mm at 20 % speed (blend corners at 50 %: 2 mm). Stops
+  (points where Pilz plans all joints at rest) are kept exact: the trajectory is split there and
+  every piece is filtered on its own, which adds about 0.2–0.6 s per stop. `robotarm_motion` does
+  this for every Pilz segment; **Pilz plans made and executed in RViz are not jerk limited.**
+  `robotarm_motion/scripts/compare_smoothing.py` shows the effect for the saved programs.
 
 ## Quickstart
 

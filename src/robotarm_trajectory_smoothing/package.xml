@@ -4,8 +4,9 @@
   <name>robotarm_trajectory_smoothing</name>
   <version>0.1.0</version>
   <description>
-    Jerk-limited smoothing (MoveIt's Ruckig smoothing) of whole joint trajectories as a service,
-    for blended Pilz sequences whose blend zones the planning pipeline does not smooth.
+    Jerk-limited smoothing of whole joint trajectories as a service (moving-average / FIR jerk
+    limitation, exact stops), for Pilz sequences: their profiles are trapezoidal and their LIN and
+    blend accelerations jump from point to point.
   </description>
   <maintainer email="ruben01egle@gmail.com">Ruben Egle</maintainer>
   <license>TODO: License declaration</license>
@@ -17,6 +18,8 @@
   <depend>moveit_ros_planning</depend>
   <depend>trajectory_msgs</depend>
   <depend>robotarm_interface</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
